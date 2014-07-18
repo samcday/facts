@@ -63,7 +63,7 @@ var LastfmArtist = sequelize.define("LastfmArtist", {
   title: Sequelize.STRING,
 })
 
-sequelize.sync({ force: true }).success(function() {
+sequelize.sync({  }).success(function() {
   
 });
 
@@ -85,8 +85,39 @@ var app = koa();
 app.use(router(app));
 
 app.get("/lastfm/backfill", function*() {
-  var lastScrobble = yield LastfmScrobble.find({ order: "when_scrobbled DESC" });
-  this.body = lastScrobble;
+  var lastScrobble = yield LastfmScrobble.find({ order: "when_scrobbled ASC" }).run();
+  var queryTo = Date.now();
+
+  if (lastScrobble !== null) {
+    queryTo = +new Date(lastScrobble.when_scrobbled);
+  }
+
+  queryTo = Math.round(queryTo / 1000);
+  console.log(queryTo);
+
+  var scrobbles = yield lastfmReq("user.getRecentTracks", {
+    user: process.env.LASTFM_USER,
+    to: queryTo,
+    limit: 200
+  });
+  scrobbles = scrobbles.recenttracks;
+
+  var newScrobbles = [];
+  scrobbles.track.forEach(function(scrobble) {
+    if (scrobble["@attr"] && scrobble["@attr"].nowplaying === "true") {
+      // TODO: skip nowplaying for now.
+      return;
+    }
+
+    newScrobbles.push({
+      song_mbid: scrobble.mbid,
+      when_scrobbled: new Date(scrobble.date.uts * 1000)
+    });
+  });
+
+  yield LastfmScrobble.bulkCreate(newScrobbles);
+
+  this.body = newScrobbles;
 });
 
 app.listen(3000);
