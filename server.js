@@ -4,99 +4,33 @@ require("dotenv").load();
 
 var koa = require("koa");
 var router = require("koa-router");
-var Sequelize = require("sequelize");
 var LastFmNode = require("lastfm").LastFmNode;
 var Promise = require("bluebird");
+var db = require("./db");
 
 var lastfm = new LastFmNode({
   api_key: process.env.LASTFM_KEY,
   useragent: 'facts/samcday.com.au'
 });
 
-var sequelize = new Sequelize(process.env.DB_URL);
-
-var mbidValidation = {
-  len: 36
-};
-
-var LastfmScrobble = sequelize.define("LastfmScrobble", {
-  // song_mbid: {
-  //   type: Sequelize.STRING(36),
-  //   allowNull: false,
-  //   validate: mbidValidation,
-  // },
-  when_scrobbled: Sequelize.DATE,
-}, {underscored: true});
-
-var LastfmSong = sequelize.define("LastfmSong", {
-  mbid: {
-    type: Sequelize.STRING(36),
-    primaryKey: true,
-    validate: mbidValidation,
-  },
-  title: Sequelize.STRING,
-  // album_mbid: {
-  //   type: Sequelize.STRING(36),
-  //   validate: mbidValidation,
-  // },
-}, {underscored: true});
-
-var LastfmAlbum = sequelize.define("LastfmAlbum", {
-  mbid: {
-    type: Sequelize.STRING(36),
-    primaryKey: true,
-    validate: mbidValidation,
-  },
-  name: Sequelize.STRING,
-  image: Sequelize.STRING, 
-  // artistMbid: {
-  //   type: Sequelize.STRING(36),
-  //   validate: mbidValidation,
-  // },
-}, {underscored: true});
-
-var LastfmArtist = sequelize.define("LastfmArtist", {
-  mbid: {
-    type: Sequelize.STRING(36),
-    primaryKey: true,
-    validate: mbidValidation,
-  },
-  name: Sequelize.STRING,
-  image: Sequelize.STRING,
-}, {underscored: true});
-
-// LastfmSong.belongsTo(LastfmAlbum, { foreignKey: "album_mbid" });
-// LastfmAlbum.belongsTo(LastfmArtist, { foreignKey: "artist_mbid" });
-
-LastfmArtist.hasMany(LastfmAlbum, { foreignKey: "artist_mbid" });
-LastfmAlbum.belongsTo(LastfmArtist, { foreignKey: "artist_mbid" });
-
-LastfmAlbum.hasMany(LastfmSong, { foreignKey: "album_mbid" });
-LastfmSong.belongsTo(LastfmAlbum, { foreignKey: "album_mbid" });
-
-LastfmSong.hasOne(LastfmScrobble, { foreignKey: "song_mbid" });
-
-sequelize.sync({  });
-
 function lastfmReq(name, params) {
   return new Promise(function(resolve, reject) {
     params.handlers = {
       success: resolve,
       error: function(error) {
-        reject(new Error(error.message))
+        reject(new Error(error.message));
       }
     };
 
-    lastfm.request(name, params)
+    lastfm.request(name, params);
   });
 }
 
 var app = koa();
-
 app.use(router(app));
 
 app.get("/lastfm/backfill", function*() {
-  var lastScrobble = yield LastfmScrobble.find({ order: "when_scrobbled ASC" }).run();
+  var lastScrobble = yield db.LastfmScrobble.find({ order: "when_scrobbled ASC" }).run();
   var queryTo = Date.now();
 
   if (lastScrobble !== null) {
@@ -155,21 +89,23 @@ app.get("/lastfm/backfill", function*() {
     }
   });
 
-  yield LastfmScrobble.bulkCreate(newScrobbles);
+  yield db.LastfmScrobble.bulkCreate(newScrobbles);
+
+  var i;
 
   var songIds = Object.keys(songs);
-  for (var i = 0; i < songIds.length; i++) {
-    yield LastfmSong.findOrCreate({mbid: songIds[i]}, songs[songIds[i]]);
+  for (i = 0; i < songIds.length; i++) {
+    yield db.LastfmSong.findOrCreate({mbid: songIds[i]}, songs[songIds[i]]);
   }
 
   var albumIds = Object.keys(albums);
-  for (var i = 0; i < albumIds.length; i++) {
-    yield LastfmAlbum.findOrCreate({mbid: albumIds[i]}, albums[albumIds[i]]);
+  for (i = 0; i < albumIds.length; i++) {
+    yield db.LastfmAlbum.findOrCreate({mbid: albumIds[i]}, albums[albumIds[i]]);
   }
 
   var artistIds = Object.keys(artists);
-  for (var i = 0; i < artistIds.length; i++) {
-    yield LastfmArtist.findOrCreate({mbid: artistIds[i]}, artists[artistIds[i]]);
+  for (i = 0; i < artistIds.length; i++) {
+    yield db.LastfmArtist.findOrCreate({mbid: artistIds[i]}, artists[artistIds[i]]);
   }
 
   this.body = newScrobbles;
@@ -182,7 +118,7 @@ app.get("/lastfm/artist/:mbid", function*() {
 
   artistInfo = artistInfo.artist;
 
-  var artist = yield LastfmArtist.create({
+  var artist = yield db.LastfmArtist.create({
     mbid: artistInfo.mbid,
     name: artistInfo.name,
   });
@@ -215,8 +151,17 @@ function findImageName(images) {
 //   })
 // });
 
+app.get("/lastfm/scrobbles", function*() {
+  var scrobbles = yield db.LastfmScrobble.findAll({
+    order: "when_scrobbled DESC",
+    limit: 10
+  });
+
+  this.body = scrobbles;
+});
+
 app.get("/lastfm/scrobble/:when", function*() {
-  var scrobble = yield LastfmScrobble.find({
+  var scrobble = yield db.LastfmScrobble.find({
     when_scrobbled: new Date(this.params.when)
   });
 
@@ -224,12 +169,12 @@ app.get("/lastfm/scrobble/:when", function*() {
 });
 
 app.get("/lastfm/song/:mbid", function*() {
-  var song = yield LastfmSong.find({
+  var song = yield db.LastfmSong.find({
     mbid: this.params.mbid,
     include: {
-      model: LastfmAlbum,
+      model: db.LastfmAlbum,
       include: {
-        model: LastfmArtist
+        model: db.LastfmArtist
       }
     }
   });
