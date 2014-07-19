@@ -14,4 +14,4 @@ LastfmSong.belongsTo(LastfmAlbum, { foreignKey: "album_mbid" });
 
 LastfmSong.hasOne(LastfmScrobble, { foreignKey: "song_mbid" });
 
-sequelize.sync({  });
+sequelize.ready = sequelize.sync({  });
