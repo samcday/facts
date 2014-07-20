@@ -1,5 +1,7 @@
 var Sequelize = require("sequelize");
-var sequelize = module.exports = new Sequelize(process.env.DB_URL);
+var sequelize = module.exports = new Sequelize(process.env.DB_URL, {
+  logging: require("debug")("db")
+});
 
 var LastfmScrobble = sequelize.LastfmScrobble = sequelize.import("models/LastfmScrobble");
 var LastfmSong = sequelize.LastfmSong = sequelize.import("models/LastfmSong");

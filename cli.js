@@ -7,8 +7,21 @@ require("dotenv").load();
 
 var lastfm = require("./lastfm");
 
-lastfm.backfill().then(function() {
-  console.log("Done.");
-}).catch(function(err) {
-  console.error(err);
-});
+var total = 0;
+
+function runBackfill() {
+  lastfm.backfill().then(function(num) {
+    if(!num) {
+      console.log("Done!");
+      return;
+    }
+
+    total += num;
+    process.stdout.write("\rProcessed " + total + " scrobbles");
+    runBackfill();
+  });
+}
+
+// runBackfill();
+
+lastfm.repairScrobble(135);
