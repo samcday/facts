@@ -18,20 +18,20 @@ app.get("/lastfm/backfill", function*() {
   this.body = newScrobbles;
 });
 
-app.get("/lastfm/artist/:mbid", function*() {
-  var artistInfo = yield lastfmReq("artist.getInfo", {
-    mbid: this.params.mbid
-  });
+// app.get("/lastfm/artist/:mbid", function*() {
+//   var artistInfo = yield lastfmReq("artist.getInfo", {
+//     mbid: this.params.mbid
+//   });
 
-  artistInfo = artistInfo.artist;
+//   artistInfo = artistInfo.artist;
 
-  var artist = yield db.LastfmArtist.create({
-    mbid: artistInfo.mbid,
-    name: artistInfo.name,
-  });
+//   var artist = yield db.LastfmArtist.create({
+//     mbid: artistInfo.mbid,
+//     name: artistInfo.name,
+//   });
 
-  this.body = artist;
-});
+//   this.body = artist;
+// });
 
 // app.get("/lastfm/album/:mbid", function*() {
 //   var albumInfo = yield lastfmReq("album.getInfo", {
@@ -46,9 +46,25 @@ app.get("/lastfm/artist/:mbid", function*() {
 // });
 
 app.get("/lastfm/scrobbles", function*() {
+  yield db.ready;
+
   var scrobbles = yield db.LastfmScrobble.findAll({
     order: "when_scrobbled DESC",
-    limit: 10
+    limit: 10,
+    include: {
+      model: db.LastfmSong,
+      as: "Song",
+      include: [
+        {
+          model: db.LastfmAlbum,
+          as: "Album"
+        },
+        {
+          model: db.LastfmArtist,
+          as: "Artist"
+        },
+      ]
+    }
   });
 
   this.body = scrobbles;

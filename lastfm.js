@@ -73,26 +73,25 @@ exports.loadScrobbleData = Promise.coroutine(function*(scrobble) {
     mbid: artistMbid,
     name: artistName,
   });
-
-  if (!albumMbid || !albumName) {
-    debug("No mbid/name for album! I wasn't trained for this!", scrobble);
-    return false;
+ 
+  if (albumMbid && albumName) {
+    yield db.LastfmAlbum.findOrCreate({mbid: albumMbid}, {
+      mbid: albumMbid,
+      name: albumName,
+      image: findImageName(scrobble.image),
+      artist_mbid: artistMbid,
+    });
   }
-
-  yield db.LastfmAlbum.findOrCreate({mbid: albumMbid}, {
-    mbid: albumMbid,
-    name: albumName,
-    image: findImageName(scrobble.image),
-    artist_mbid: artistMbid,
-  });
 
   if (!songMbid) {
     if (!songName) {
       debug("Found song with no mbid OR name. Wtf.", scrobble);
       return false;
     }
+
     debug("Fetching song mbid for " + songName);
     var songMB = yield mb.searchRecordingsAsync('"' + songName + '"', {
+      arid: artistMbid,
       reid: albumMbid
     });
 
@@ -110,7 +109,8 @@ exports.loadScrobbleData = Promise.coroutine(function*(scrobble) {
   yield db.LastfmSong.findOrCreate({mbid: songMbid}, {
     mbid: songMbid,
     title: songName,
-    album_mbid: albumMbid,
+    artist_mbid: artistMbid,
+    album_mbid: albumMbid || null,
   });
 
   return songMbid;
