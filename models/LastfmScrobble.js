@@ -4,6 +4,8 @@ module.exports = function(sequelize, DataTypes) {
       type: DataTypes.DATE,
       unique: true
     },
+    unclassified: DataTypes.BOOLEAN,
+    raw_data: DataTypes.TEXT
   }, {
     underscored: true
   });

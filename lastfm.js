@@ -39,8 +39,6 @@ function findImageName(images) {
 // there is no musicbrainz ids provided by lastfm. When this happens we do
 // lookups in the MusicBrainz DB itself.
 exports.loadScrobbleData = Promise.coroutine(function*(scrobble) {
-  debug("Loading metadata for scrobble", scrobble);
-
   // Start with the artist.
   scrobble.artist = scrobble.artist || {};
   scrobble.album = scrobble.album || {};
@@ -54,13 +52,15 @@ exports.loadScrobbleData = Promise.coroutine(function*(scrobble) {
 
   if (!artistMbid) {
     if (!artistName) {
-      throw new Error("Found artist with no mbid OR name. Wtf.");
+      debug("Found artist with no mbid OR name. Wtf.", scrobble);
+      return false;
     }
     debug("Fetching artist mbid for " + artistName);
     var artistMB = yield mb.searchArtistsAsync('"' + artistName + '"', {});
 
     if (artistMB.length !== 1) {
-      throw new Error("Ambiguous artist match when looking up mbid.");
+      debug("Ambiguous artist match when looking up mbid.", scrobble);
+      return false;
     }
 
     artistMB = artistMB[0];
@@ -72,11 +72,11 @@ exports.loadScrobbleData = Promise.coroutine(function*(scrobble) {
   yield db.LastfmArtist.findOrCreate({mbid: artistMbid}, {
     mbid: artistMbid,
     name: artistName,
-    image: findImageName(scrobble.artist.image),
   });
 
   if (!albumMbid || !albumName) {
-    throw new Error("No mbid/name for album! I wasn't trained for this!");
+    debug("No mbid/name for album! I wasn't trained for this!", scrobble);
+    return false;
   }
 
   yield db.LastfmAlbum.findOrCreate({mbid: albumMbid}, {
@@ -88,7 +88,8 @@ exports.loadScrobbleData = Promise.coroutine(function*(scrobble) {
 
   if (!songMbid) {
     if (!songName) {
-      throw new Error("Found song with no mbid OR name. Wtf.");
+      debug("Found song with no mbid OR name. Wtf.", scrobble);
+      return false;
     }
     debug("Fetching song mbid for " + songName);
     var songMB = yield mb.searchRecordingsAsync('"' + songName + '"', {
@@ -96,7 +97,8 @@ exports.loadScrobbleData = Promise.coroutine(function*(scrobble) {
     });
 
     if (songMB.length !== 1) {
-      throw new Error("Ambiguous song match when looking up mbid.");
+      debug("Ambiguous song match when looking up mbid.", scrobble);
+      return false;
     }
 
     songMB = songMB[0];
@@ -107,9 +109,11 @@ exports.loadScrobbleData = Promise.coroutine(function*(scrobble) {
 
   yield db.LastfmSong.findOrCreate({mbid: songMbid}, {
     mbid: songMbid,
-    name: songName,
+    title: songName,
     album_mbid: albumMbid,
   });
+
+  return songMbid;
 });
 
 exports.backfill = Promise.coroutine(function*() {
@@ -128,7 +132,7 @@ exports.backfill = Promise.coroutine(function*() {
   var scrobbles = yield lastfmReq("user.getRecentTracks", {
     user: process.env.LASTFM_USER,
     to: queryTo,
-    limit: 2,
+    limit: 20,
     extended: true,
   });
   scrobbles = scrobbles.recenttracks.track;
@@ -142,10 +146,17 @@ exports.backfill = Promise.coroutine(function*() {
       continue;
     }
 
-    yield exports.loadScrobbleData(scrobble);
-    yield db.LastfmScrobble.create({
-      song_mbid: scrobble.mbid,
+    var scrobbleData = {
+      song_mbid: yield exports.loadScrobbleData(scrobble),
       when_scrobbled: new Date(scrobble.date.uts * 1000)
-    });
+    };
+
+    if (!scrobbleData.song_mbid) {
+      scrobbleData.song_mbid = null;
+      scrobbleData.unclassified = true;
+      scrobbleData.raw_data = JSON.stringify(scrobble);
+    }
+
+    yield db.LastfmScrobble.create(scrobbleData);
   }
 });
