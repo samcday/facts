@@ -16,7 +16,7 @@
     "koa-router": "^3.2.1",
     "lastfm": "^0.9.2",
     "limiter": "^1.0.5",
-    "musicbrainz": "git://github.com/samcday/node-musicbrainz.git#fix-single-results",
+    "musicbrainz": "git://github.com/samcday/node-musicbrainz.git#facts-mix",
     "mysql": "^2.4.1",
     "sequelize": "^1.7.9",
     "traceurified": "0.0.3"
