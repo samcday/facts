@@ -136,6 +136,16 @@ exports.loadScrobbleData = Promise.coroutine(function*(scrobble) {
     name: artistName,
   });
  
+  if (!albumMbid && albumName) {
+    debug("Looking up album mbid for " + albumName);
+    var albumLookup = yield mb.searchReleasesAsync('"' + albumName + '"', {arid: artistMbid});
+
+    if (albumLookup.length === 1) {
+      albumMbid = albumLookup[0].id;
+      albumName = albumLookup[0].title;
+    }
+  }
+
   if (albumMbid && albumName) {
     yield db.LastfmAlbum.findOrCreate({mbid: albumMbid}, {
       mbid: albumMbid,
