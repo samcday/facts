@@ -4,6 +4,11 @@ var mb = Promise.promisifyAll(require("musicbrainz"));
 var debug = require("debug")("lastfm");
 var db = require("./db");
 
+// When looking up a release for a song, we can get many results.
+// We pick the first one that matches the first country we find in this list,
+// in order. If none match, we just pick the first one.
+var preferredCountry = ["AU", "US"];
+
 mb.configure({
   rateLimit: {
     requests: 1,
@@ -53,6 +58,96 @@ function findImageName(images) {
   return name;
 }
 
+// // Given a scrobble with no artist mbid present, try to determine what the
+// // ID is.
+// var loadArtist = Promise.coroutine(function*(scrobble) {
+//   // See if we already have the artist in local db.
+//   // Because there could be ambiguities (multiple artists with same name), we
+//   // only try this approach if we have an album or song name we can use to
+//   // disambiguate the query.
+//   var artistName = scrobble.artist.name,
+//       albumMbid = scrobble.album.mbid,
+//       songMbid = scrobble.mbid;
+
+//   if (albumMbid || songMbid) {
+//     var criteria = [];
+//     var include = [];
+
+//     if (albumMbid) {
+//       include.push({
+//         model: db.LastfmAlbum,
+//         as: "Album"
+//       });
+//       criteria.push({
+//         "Album.mbid": albumMbid
+//       });
+//     }
+
+//     if (songMbid) {
+//       include.push({
+//         model: db.LastfmSong,
+//         as: "Song"
+//       });
+//       criteria.push({
+//         "Song.mbid": songMbid
+//       }); 
+//     }
+
+//     var existingArtist = yield LastfmArtist.find({
+//       where: Sequelize.or.apply(Sequelize, criteria),
+//       include: include
+//     });
+
+//     if (existingArtist) {
+//       return [true, existingArtist.mbid, existingArtist.name];
+//     }
+//   }
+
+//   // Only need to proceed with a musicbrainz search if we didn't find it in DB
+//   debug("Fetching artist mbid for " + artistName);
+//   var artistMB = yield mb.searchArtistsAsync('"' + artistName + '"', {});
+
+//   if (artistMB.length !== 1) {
+//     debug("Ambiguous artist match when looking up mbid.", scrobble);
+//     return [false, false, false];
+//   }
+
+//   artistMB = artistMB[0];
+//   return [false, artistMB.id, artistMB.name];
+// });
+
+// var loadAlbum = Promise.coroutine(function*(scrobble) {
+//   var artistMbid = scrobble.artist.mbid,
+//       artistName = scrobble.artist.name,
+//       albumMbid = scrobble.album.mbid,
+//       albumName = scrobble.album["#text"],
+//       songMbid = scrobble.mbid;
+
+//   // If we have a song / album mbid, we can try looking up the album in DB.
+//   if (artistMbid || songMbid) {
+
+//   }
+
+//   debug("Looking up album mbid for " + albumName);
+//   var albumLookup = yield mb.searchReleasesAsync('"' + albumName + '"', {arid: artistMbid});
+
+//   if (albumLookup.length === 1) {
+//     albumMbid = albumLookup[0].id;
+//     albumName = albumLookup[0].title;
+//   }
+// });
+
+// Looks up a song by mbid. If it's not in DB, Musicbrainz is consulted.
+var lookupSong = Promise.coroutine(function*(mbid, ctx) {
+  // Songs won't exist in DB unless they are fully formed.
+  var dbResult = yield db.LastFmSong.find(mbid);
+
+  if (dbResult) {
+    ctx.albumMbid = dbResult.album_mbid;
+    ctx.artistMbid = dbResult.artist_mbid;
+  }
+});
+
 // Given a particular scrobble, this function will ensure the corresponding
 // track / album / artist have all been populated in the DB. In some cases
 // there is no musicbrainz ids provided by lastfm. When this happens we do
@@ -62,142 +157,111 @@ exports.loadScrobbleData = Promise.coroutine(function*(scrobble) {
   scrobble.artist = scrobble.artist || {};
   scrobble.album = scrobble.album || {};
 
-  var artistMbid = scrobble.artist.mbid,
-      artistName = scrobble.artist.name,
-      albumMbid = scrobble.album.mbid,
+  var artistName = scrobble.artist.name,
       albumName = scrobble.album["#text"],
-      songMbid = scrobble.mbid,
-      songName = scrobble.name;
+      songName = scrobble.name,
+      artistLoaded = false,
+      albumLoaded = false;
 
-  if (!artistMbid) {
-    if (!artistName) {
-      debug("Found artist with no mbid OR name. Wtf.", scrobble);
-      return false;
-    }
+  var ctx = {
+    artistMbid: scrobble.artist.mbid,
+    albumMbid: scrobble.album.mbid,
+    songMbid: scrobble.mbid,
+  };
 
-    // See if we already have the artist in local db.
-    // Because there could be ambiguities (multiple artists with same name), we
-    // only try this approach if we have an album or song name we can use to
-    // disambiguate the query.
-    if (albumMbid || songMbid) {
-      var criteria = [];
-      var include = [];
-
-      if (albumMbid) {
-        include.push({
-          model: db.LastfmAlbum,
-          as: "Album"
-        });
-        criteria.push({
-          "Album.mbid": albumMbid
-        });
-      }
-
-      if (songMbid) {
-        include.push({
-          model: db.LastfmSong,
-          as: "Song"
-        });
-        criteria.push({
-          "Song.mbid": songMbid
-        }); 
-      }
-
-      var existingArtist = yield LastfmArtist.find({
-        where: Sequelize.or.apply(Sequelize, criteria),
-        include: include
-      });
-
-      if (existingArtist) {
-        artistMbid = existingArtist.mbid;
-        artistName = existingArtist.name;
-      }
-    }
-
-    // Only need to proceed with a musicbrainz search if we didn't find it in DB
-    if (!artistMbid) {
-      debug("Fetching artist mbid for " + artistName);
-      var artistMB = yield mb.searchArtistsAsync('"' + artistName + '"', {});
-
-      if (artistMB.length !== 1) {
-        debug("Ambiguous artist match when looking up mbid.", scrobble);
-        return false;
-      }
-
-      artistMB = artistMB[0];
-
-      artistMbid = artistMB.id;
-      artistName = artistMB.name;
-    }
+  // Start with song. If we have an mbid for it, then everything else is trivial
+  if (ctx.songMbid) {
+    yield lookupSong(ctx.songMbid, ctx);
   }
 
-  yield db.LastfmArtist.findOrCreate({mbid: artistMbid}, {
-    mbid: artistMbid,
-    name: artistName,
-  });
+  // If we aren't 100% confident with our match, let's leave it as unclassified.
+  if (!ctx.songMbid || !ctx.albumMbid || !ctx.artistMbid) {
+    return false;
+  }
+
+  // var context = {
+  //   albumMbid: albumMbid,
+  //   artistMbid: artistMbid,
+  //   songMbid: songMbid,
+  // };
+
+  // if (!artistMbid) {
+  //   if (!artistName) {
+  //     debug("Found artist with no mbid OR name. Wtf.", scrobble);
+  //     throw new Error("Found an artist with no mbid or name. That should never happen.");
+  //   }
+
+  //   [artistLoaded, artistMbid, artistName] = yield loadArtist(context, scrobble);
+
+  //   if (!artistMbid) {
+  //     return false;
+  //   }
+  // }
+
+  // // If we didn't already grab a valid artist out of DB, time to stuff one in.
+  // if (!artistLoaded) {
+  //   yield db.LastfmArtist.create({
+  //     mbid: artistMbid,
+  //     name: artistName,
+  //   });
+  // }
  
-  if (!albumMbid && albumName) {
-    debug("Looking up album mbid for " + albumName);
-    var albumLookup = yield mb.searchReleasesAsync('"' + albumName + '"', {arid: artistMbid});
+  // if (!albumMbid) {
+  //   [albumLoaded, albumMbid, albumName] = yield loadAlbum(scrobble);
+  // }
 
-    if (albumLookup.length === 1) {
-      albumMbid = albumLookup[0].id;
-      albumName = albumLookup[0].title;
-    }
-  }
+  // if (albumMbid && !albumLoaded) {
+  //   yield db.LastfmAlbum.create({
+  //     mbid: albumMbid,
+  //     name: albumName,
+  //     image: findImageName(scrobble.image),
+  //     artist_mbid: artistMbid,
+  //   });
+  // }
 
-  if (albumMbid && albumName) {
-    yield db.LastfmAlbum.findOrCreate({mbid: albumMbid}, {
-      mbid: albumMbid,
-      name: albumName,
-      image: findImageName(scrobble.image),
-      artist_mbid: artistMbid,
-    });
-  }
+  // if (!songMbid) {
+  //   if (!songName) {
+  //     debug("Found song with no mbid OR name. Wtf.", scrobble);
+  //     return false;
+  //   }
 
-  if (!songMbid) {
-    if (!songName) {
-      debug("Found song with no mbid OR name. Wtf.", scrobble);
-      return false;
-    }
+  //   debug("Fetching song mbid for " + songName);
+  //   var searchSongName = songName;
+  //   var songFilter = {
+  //     arid: artistMbid,
+  //   };
 
-    debug("Fetching song mbid for " + songName);
-    var searchSongName = songName;
-    var songFilter = {
-      arid: artistMbid,
-    };
+  //   if (albumMbid) {
+  //     songFilter.reid = albumMbid;
+  //   }
 
-    if (albumMbid) {
-      songFilter.reid = albumMbid;
-    }
+  //   var songMB = yield mb.searchRecordingsAsync('"' + searchSongName + '"', songFilter);
 
-    var songMB = yield mb.searchRecordingsAsync('"' + searchSongName + '"', songFilter);
+  //   // If we didn't get an exact match, it might be because of funny chars.
+  //   if (songMB.length !== 1) {
+  //     songName = songName.replace(/[^a-z0-9]/gi, " ");
+  //     songMB = yield mb.searchRecordingsAsync('"' + searchSongName + '"', songFilter);
+  //   }
 
-    // If we didn't get an exact match, it might be because of funny chars.
-    if (songMB.length !== 1) {
-      songName = songName.replace(/[^a-z0-9]/gi, " ");
-      songMB = yield mb.searchRecordingsAsync('"' + searchSongName + '"', songFilter);
-    }
+  //   if (songMB.length !== 1) {
+  //     debug("Ambiguous song match when looking up mbid.", scrobble);
+  //     return false;
+  //   }
 
-    if (songMB.length !== 1) {
-      debug("Ambiguous song match when looking up mbid.", scrobble);
-      return false;
-    }
+  //   songMB = songMB[0];
 
-    songMB = songMB[0];
+  //   songMbid = songMB.id;
+  //   songName = songMB.title;
+  // }
 
-    songMbid = songMB.id;
-    songName = songMB.title;
-  }
+  // yield db.LastfmSong.findOrCreate({mbid: songMbid}, {
+  //   mbid: songMbid,
+  //   title: songName,
+  //   artist_mbid: artistMbid,
+  //   album_mbid: albumMbid || null,
+  // });
 
-  yield db.LastfmSong.findOrCreate({mbid: songMbid}, {
-    mbid: songMbid,
-    title: songName,
-    artist_mbid: artistMbid,
-    album_mbid: albumMbid || null,
-  });
-
-  return songMbid;
+  // return songMbid;
 });
 
 exports.backfill = Promise.coroutine(function*() {
