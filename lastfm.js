@@ -75,7 +75,7 @@ function findImageName(images) {
 
 //     if (albumMbid) {
 //       include.push({
-//         model: db.LastfmAlbum,
+//         model: db.Album,
 //         as: "Album"
 //       });
 //       criteria.push({
@@ -85,7 +85,7 @@ function findImageName(images) {
 
 //     if (songMbid) {
 //       include.push({
-//         model: db.LastfmSong,
+//         model: db.Song,
 //         as: "Song"
 //       });
 //       criteria.push({
@@ -138,14 +138,25 @@ function findImageName(images) {
 // });
 
 // Looks up a song by mbid. If it's not in DB, Musicbrainz is consulted.
-var lookupSong = Promise.coroutine(function*(mbid, ctx) {
+var lookupSong = Promise.coroutine(function*(mbid) {
   // Songs won't exist in DB unless they are fully formed.
-  var dbResult = yield db.LastFmSong.find(mbid);
+  var dbSong = yield db.Song.count(mbid);
 
-  if (dbResult) {
-    ctx.albumMbid = dbResult.album_mbid;
-    ctx.artistMbid = dbResult.artist_mbid;
+  if (dbSong) {
+    // Song mbid is valid, and in db already. We're done!
+    return true;
   }
+
+  // Not in DB yet. Let's go find it.
+  var song = yield mb.lookupRecordingAsync(mbid, ['release']);
+
+  // At this point we can be sure we haven't yet loaded the release, because
+  // if we had, we'd already have found the song in the first query.
+  // So, let's grab the release, and let's also include the release-group
+  // plus all recordings on this release while we're at it.
+  
+
+  return false;
 });
 
 // Given a particular scrobble, this function will ensure the corresponding
@@ -171,7 +182,9 @@ exports.loadScrobbleData = Promise.coroutine(function*(scrobble) {
 
   // Start with song. If we have an mbid for it, then everything else is trivial
   if (ctx.songMbid) {
-    yield lookupSong(ctx.songMbid, ctx);
+    if (yield lookupSong(ctx.songMbid, ctx)) {
+      return ctx.songMbid;
+    }
   }
 
   // If we aren't 100% confident with our match, let's leave it as unclassified.
@@ -200,7 +213,7 @@ exports.loadScrobbleData = Promise.coroutine(function*(scrobble) {
 
   // // If we didn't already grab a valid artist out of DB, time to stuff one in.
   // if (!artistLoaded) {
-  //   yield db.LastfmArtist.create({
+  //   yield db.Artist.create({
   //     mbid: artistMbid,
   //     name: artistName,
   //   });
@@ -211,7 +224,7 @@ exports.loadScrobbleData = Promise.coroutine(function*(scrobble) {
   // }
 
   // if (albumMbid && !albumLoaded) {
-  //   yield db.LastfmAlbum.create({
+  //   yield db.Album.create({
   //     mbid: albumMbid,
   //     name: albumName,
   //     image: findImageName(scrobble.image),
@@ -254,7 +267,7 @@ exports.loadScrobbleData = Promise.coroutine(function*(scrobble) {
   //   songName = songMB.title;
   // }
 
-  // yield db.LastfmSong.findOrCreate({mbid: songMbid}, {
+  // yield db.Song.findOrCreate({mbid: songMbid}, {
   //   mbid: songMbid,
   //   title: songName,
   //   artist_mbid: artistMbid,
@@ -267,7 +280,7 @@ exports.loadScrobbleData = Promise.coroutine(function*(scrobble) {
 exports.backfill = Promise.coroutine(function*() {
   yield db.ready;
 
-  var lastScrobble = yield db.LastfmScrobble.find({ order: "when_scrobbled ASC" });
+  var lastScrobble = yield db.Scrobble.find({ order: "when_scrobbled ASC" });
   var queryTo = Date.now();
 
   if (lastScrobble !== null) {
@@ -305,14 +318,14 @@ exports.backfill = Promise.coroutine(function*() {
       scrobbleData.raw_data = JSON.stringify(scrobble, null, 2);
     }
 
-    yield db.LastfmScrobble.create(scrobbleData);
+    yield db.Scrobble.create(scrobbleData);
   }
 
   return scrobbles.length;
 });
 
 exports.repairScrobble = Promise.coroutine(function*(id) {
-  var scrobble = yield db.LastfmScrobble.find(id);
+  var scrobble = yield db.Scrobble.find(id);
   var scrobbleData = JSON.parse(scrobble.raw_data);
   console.log(scrobbleData);
 
