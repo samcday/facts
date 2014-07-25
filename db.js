@@ -3,22 +3,23 @@ var sequelize = module.exports = new Sequelize(process.env.DB_URL, {
   logging: require("debug")("db")
 });
 
-var LastfmScrobble = sequelize.LastfmScrobble = sequelize.import("models/LastfmScrobble");
-var LastfmSong = sequelize.LastfmSong = sequelize.import("models/LastfmSong");
-var LastfmAlbum = sequelize.LastfmAlbum = sequelize.import("models/LastfmAlbum");
-var LastfmArtist = sequelize.LastfmArtist = sequelize.import("models/LastfmArtist");
+var Scrobble = sequelize.Scrobble = sequelize.import("models/Scrobble");
+var Song = sequelize.Song = sequelize.import("models/Song");
+var Album = sequelize.Album = sequelize.import("models/Album");
+var AlbumRelease = sequelize.AlbumRelease = sequelize.import("models/AlbumRelease");
+var Artist = sequelize.Artist = sequelize.import("models/Artist");
 
-LastfmArtist.hasMany(LastfmAlbum, { foreignKey: "artist_mbid" });
-LastfmArtist.hasMany(LastfmSong, { foreignKey: "artist_mbid" });
+Artist.hasMany(Song, { foreignKey: "artist_mbid" });
+Song.belongsTo(Artist, { foreignKey: "artist_mbid" });
+Artist.hasMany(AlbumRelease, { foreignKey: "artist_mbid" });
+AlbumRelease.belongsTo(Artist, { foreignKey: "artist_mbid" });
 
-LastfmAlbum.belongsTo(LastfmArtist, { as: "Artist", foreignKey: "artist_mbid" });
-LastfmAlbum.hasMany(LastfmSong, { foreignKey: "album_mbid" });
+Album.hasMany(Song, { foreignKey: "album_mbid" });
 
-LastfmSong.belongsTo(LastfmArtist, { as: "Artist", foreignKey: "artist_mbid" });
-LastfmSong.belongsTo(LastfmAlbum, { as: "Album", foreignKey: "album_mbid" });
-LastfmSong.hasMany(LastfmScrobble, { foreignKey: "song_mbid" });
+Song.belongsTo(Album, { foreignKey: "album_mbid" });
+Song.hasMany(Scrobble, { foreignKey: "song_mbid" });
 
-LastfmScrobble.belongsTo(LastfmSong, { as: "Song", foreignKey: "song_mbid" });
+Scrobble.belongsTo(Song, { foreignKey: "song_mbid" });
 
 sequelize.ready = new Promise(function(resolve, reject) {
   sequelize.sync({  })

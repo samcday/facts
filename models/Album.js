@@ -1,5 +1,5 @@
 module.exports = function(sequelize, DataTypes) {
-  return sequelize.define("LastfmAlbum", {
+  return sequelize.define("Album", {
     mbid: {
       type: DataTypes.STRING(36),
       primaryKey: true,
@@ -7,8 +7,6 @@ module.exports = function(sequelize, DataTypes) {
         len: 36
       },
     },
-    name: DataTypes.STRING,
-    image: DataTypes.STRING,
   }, {
     underscored: true
   });

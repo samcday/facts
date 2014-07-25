@@ -1,5 +1,5 @@
 module.exports = function(sequelize, DataTypes) {
-  return sequelize.define("LastfmScrobble", {
+  return sequelize.define("Scrobble", {
     when_scrobbled: {
       type: DataTypes.DATE,
       unique: true
