@@ -138,7 +138,7 @@ function findImageName(images) {
 // });
 
 // Looks up a song by mbid. If it's not in DB, Musicbrainz is consulted.
-var lookupSong = Promise.coroutine(function*(mbid) {
+exports.lookupSong = Promise.coroutine(function*(mbid, ctx) {
   // Songs won't exist in DB unless they are fully formed.
   var dbSong = yield db.Song.count(mbid);
 
@@ -148,13 +148,43 @@ var lookupSong = Promise.coroutine(function*(mbid) {
   }
 
   // Not in DB yet. Let's go find it.
-  var song = yield mb.lookupRecordingAsync(mbid, ['release']);
+  var song = yield mb.lookupRecordingAsync(mbid, ["releases"]);
 
-  // At this point we can be sure we haven't yet loaded the release, because
-  // if we had, we'd already have found the song in the first query.
-  // So, let's grab the release, and let's also include the release-group
-  // plus all recordings on this release while we're at it.
-  
+  // dbSong = yield db.Song.create({
+  //   mbid: mbid,
+  //   title: song.title,
+  //   duration: parseInt(song.length, 10)
+  // });
+
+  // Okay, now let's go through all the releases for this song and stick
+  // 'em in the db.
+  var releases = yield mb.browseReleasesAsync("recording", song.id, ["recordings", "release-groups"]);
+
+  for (var release of releases) {
+    // Save the release-group if it doesn't yet exist.
+    // TODO: handle non-existent release group / more than one release group?
+    var releaseGroup = release.releaseGroups[0];
+    var dbAlbum = yield db.Album.findOrCreate({mbid: releaseGroup.id}, {
+      mbid: releaseGroup.id,
+      name: releaseGroup.title
+    });
+
+    var dbRelease = yield db.AlbumRelease.findOrCreate({mbid: release.id}, {
+      mbid: release.id
+    });
+
+    yield dbAlbum.addRelease(dbRelease);
+    // yield dbRelease.addSong(dbSong);
+
+    for (var recording of release.recordings) {
+      dbSong = yield db.Song.findOrCreate({mbid: recording.id}, {
+        mbid: recording.id,
+        title: recording.title,
+        duration: parseInt(recording.length, 10)
+      });
+      yield dbRelease.addSong(dbSong);
+    }
+  }
 
   return false;
 });
@@ -293,7 +323,7 @@ exports.backfill = Promise.coroutine(function*() {
   var scrobbles = yield lastfmReq("user.getRecentTracks", {
     user: process.env.LASTFM_USER,
     to: queryTo,
-    limit: 100,
+    limit: 1,
     extended: true,
   });
   scrobbles = scrobbles.recenttracks.track;

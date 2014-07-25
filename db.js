@@ -9,17 +9,23 @@ var Album = sequelize.Album = sequelize.import("models/Album");
 var AlbumRelease = sequelize.AlbumRelease = sequelize.import("models/AlbumRelease");
 var Artist = sequelize.Artist = sequelize.import("models/Artist");
 
-Artist.hasMany(AlbumRelease, { foreignKey: "artist_mbid" });
-AlbumRelease.belongsTo(Artist, { foreignKey: "artist_mbid" });
+// An artist has many albums.
+Artist.hasMany(Album);
 
-AlbumRelease.hasMany(Album, foreignKey: "release_mbid"});
-Album.belongsTo(AlbumRelease, foreignKey: "release_mbid"});
+// Each album belongs to an artist, and has many releases.
+Album.belongsTo(Artist);
+Album.hasMany(AlbumRelease, { as: "Release" });
 
-Album.hasMany(Song, { foreignKey: "album_mbid" });
-Song.belongsTo(Album, { foreignKey: "album_mbid" });
+// Each album release belongs to an album, and has many songs.
+AlbumRelease.belongsTo(Album);
+AlbumRelease.hasMany(Song);
 
-Song.hasMany(Scrobble, { foreignKey: "song_mbid" });
-Scrobble.belongsTo(Song, { foreignKey: "song_mbid" });
+// Each song belongs to many albums / album releases.
+Song.hasMany(AlbumRelease);
+
+// Each scrobble has a song and an album release.
+Scrobble.belongsTo(Song);
+Scrobble.belongsTo(AlbumRelease);
 
 sequelize.ready = new Promise(function(resolve, reject) {
   sequelize.sync({  })

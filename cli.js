@@ -23,5 +23,8 @@ function runBackfill() {
 }
 
 // runBackfill();
+require("./db").ready.then(function() {
+  lastfm.lookupSong("ff26b95e-caad-41b8-bec1-aebb410c3b44");
+});
 
-lastfm.repairScrobble(135);
+// lastfm.repairScrobble(135);
