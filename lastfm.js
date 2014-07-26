@@ -152,9 +152,14 @@ exports.backfill = Promise.coroutine(function*(num) {
     }
 
     dbScrobbles.push({
-      when_scrobbled: new Date(scrobbleDate * 1000),
+      when_scrobbled: new Date(scrobble.date.uts * 1000),
+      song_name: scrobble.name,
+      song_mbid: scrobble.mbid,
+      album_name: scrobble.album["#text"],
+      album_mbid: scrobble.album.mbid,
+      artist_name: scrobble.artist["#text"],
+      artist_mbid: scrobble.artist.mbid,
       unclassified: true,
-      raw_data: JSON.stringify(scrobble, null, 2)
     });
   }
 
