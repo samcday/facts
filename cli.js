@@ -22,4 +22,9 @@ function runBackfill() {
   });
 }
 
-runBackfill();
+// runBackfill();
+
+
+lastfm.repairMissingSongIds(100);
+
+// lastfm.getRelease("9848c3a5-adc7-41b6-bda8-ab3fe3896bb4").then(console.log).catch(function(err) { console.error(err.stack); });

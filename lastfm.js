@@ -1,18 +1,26 @@
+"use strict";
+
 var limiter = require("limiter");
 var LastFmNode = require("lastfm").LastFmNode;
 var mb = Promise.promisifyAll(require("musicbrainz"));
 var debug = require("debug")("lastfm");
 var db = require("./db");
 
-// When looking up a release for a song, we can get many results.
-// We pick the first one that matches the first country we find in this list,
-// in order. If none match, we just pick the first one.
-var preferredCountry = ["AU", "US"];
+var replacements = {
+  "…": "..."
+};
+
+function replace(str) {
+  for (var replace of Object.keys(replacements)) {
+    str = str.replace(replace, replacements[replace]);
+  }
+  return str;
+}
 
 mb.configure({
   rateLimit: {
     requests: 1,
-    interval: 2000
+    interval: 1100
   }
 });
 
@@ -21,7 +29,7 @@ var lastfm = new LastFmNode({
   useragent: 'facts/samcday.com.au'
 });
 
-var lastfmLimiter = new limiter.RateLimiter(1, 2000);
+var lastfmLimiter = new limiter.RateLimiter(1, 1100);
 
 function lastfmReq(name, params) {
   var limitPromise = new Promise(function(resolve, reject) {
@@ -44,77 +52,6 @@ function lastfmReq(name, params) {
     });
   });
 }
-
-function findImageName(images) {
-  var name;
-  images.some(function(image) {
-    var match = /serve\/[0-9s]*\/(.*)$/.exec(image["#text"]);
-    if (match) {
-      name = match[1];
-      return true;
-    }
-  });
-
-  return name;
-}
-
-// Looks up a song by mbid. If it's not in DB, Musicbrainz is consulted.
-exports.lookupSong = Promise.coroutine(function*(mbid, ctx) {
-  // Songs won't exist in DB unless they are fully formed.
-  var dbSong = yield db.Song.count(mbid);
-
-  if (dbSong) {
-    // Song mbid is valid, and in db already. We're done!
-    return true;
-  }
-
-  // Not in DB yet. Let's go find it. When we do, let's include all the other
-  // good stuff, like artists + releases + release groups.
-  var song = yield mb.lookupRecordingAsync(mbid, ["releases", "artists"]);
-
-  dbSong = yield db.Song.create({
-    mbid: mbid,
-    title: song.title,
-    duration: parseInt(song.length, 10)
-  });
-
-  // Check if artist(s) in DB.
-  for (var artistCredit of song.artistCredits) {
-    var artist = artistCredit.artist;
-    var dbArtist = yield db.Artist.findOrCreate({mbid: artist.id}, {
-      mbid: artist.id,
-      name: artist.name,
-    });
-    yield dbSong.addArtist(dbArtist);
-    yield dbArtist.addSong(dbSong);
-  }
-
-  return true;
-});
-
-// Given a particular scrobble, this function will ensure the corresponding
-// track / album / artist have all been populated in the DB. In some cases
-// there is no musicbrainz ids provided by lastfm. When this happens we do
-// lookups in the MusicBrainz DB itself.
-exports.loadScrobbleData = Promise.coroutine(function*(scrobble) {
-  scrobble.artist = scrobble.artist || {};
-  scrobble.album = scrobble.album || {};
-
-  var ctx = {
-    artistMbid: scrobble.artist.mbid,
-    albumMbid: scrobble.album.mbid,
-    songMbid: scrobble.mbid,
-  };
-
-  // Start with song. If we have an mbid for it, then everything else is trivial
-  if (ctx.songMbid) {
-    if (yield lookupSong(ctx.songMbid, ctx)) {
-      return ctx.songMbid;
-    }
-  }
-
-  return false;
-});
 
 // Loads num historic scrobbles from Last.fm and populates DB.
 exports.backfill = Promise.coroutine(function*(num) {
@@ -173,7 +110,6 @@ exports.backfill = Promise.coroutine(function*(num) {
 exports.repairScrobble = Promise.coroutine(function*(id) {
   var scrobble = yield db.Scrobble.find(id);
   var scrobbleData = JSON.parse(scrobble.raw_data);
-  console.log(scrobbleData);
 
   var songMbid = yield exports.loadScrobbleData(scrobbleData);
   if (songMbid) {
@@ -181,5 +117,196 @@ exports.repairScrobble = Promise.coroutine(function*(id) {
     scrobble.unclassified = false;
     scrobble.song_mbid = songMbid;
     yield scrobble.save();
+  }
+});
+
+exports.getArtist = Promise.coroutine(function*(id) {
+  debug("Loading artist with id " + id);
+
+  var dbArtist, artist;
+
+  dbArtist = yield db.Artist.find(id);
+
+  if (dbArtist) {
+    return dbArtist;
+  }
+
+  artist = yield mb.lookupArtistAsync(id, ["aliases"]);
+
+  if (!artist) {
+    return false;
+  }
+
+  dbArtist = yield db.Artist.create({
+    mbid: id,
+    name: artist.name
+  });
+
+  for (var alias of artist.aliases) {
+    var dbAlias = yield db.ArtistAlias.create({
+      name: alias
+    });
+    yield dbAlias.setArtist(dbArtist);
+  }
+
+  return dbArtist;
+});
+
+exports.getAlbum = Promise.coroutine(function*(id) {
+  debug("Loading album with id " + id);
+
+  var dbAlbum, releaseGroup, dbArtists, artistCredit, artist, dbArtist;
+
+  dbAlbum = yield db.Album.find(id);
+  if (dbAlbum) {
+    return dbAlbum;
+  }
+
+  releaseGroup = yield mb.lookupReleaseGroupAsync(id, ["artists"]);
+  if (!releaseGroup) {
+    debug("Musicbrainz has no release-group with id " + id);
+    return false;
+  }
+
+  dbArtists = [];
+
+  // Make sure all corresponding artists exists in DB.
+  for (artistCredit of releaseGroup.artistCredits) {
+    artist = artistCredit.artist;
+    dbArtist = yield exports.getArtist(artist.id);
+    if (!dbArtist) {
+      // TODO: should throw?
+      return false;
+    }
+    dbArtists.push(dbArtist);
+  }
+
+  dbAlbum = yield db.Album.create({
+    mbid: id,
+    name: releaseGroup.title,
+    type: releaseGroup.primaryType,
+  });
+
+  for (dbArtist of dbArtists) {
+    yield dbArtist.addAlbum(dbAlbum);
+  }
+
+  return dbAlbum;
+});
+
+// Loads album release data from DB, with a fallback to check musicbrainz.
+exports.getRelease = Promise.coroutine(function*(id) {
+  debug("Loading release with id " + id);
+
+  var dbRelease, release, dbAlbum, medium, track, recording, dbSong, artistCredit, artist, dbArtists, dbArtist;
+
+  dbRelease = yield db.AlbumRelease.find(id);
+  if (dbRelease) {
+    return dbRelease;
+  }
+
+  // Since we're asking for release, might as well suck down all the recordings for it too.
+  release = yield mb.lookupReleaseAsync(id, ["artist-credits", "release-groups", "recordings"]);
+  if (!release) {
+    debug("Music-brainz has no release with id " + id);
+    return false;
+  }
+
+  // As far as I know, you can never have a release that belongs to more or less than one release group.
+  if (release.releaseGroups.length != 1) {
+    throw new Error("Release " + id + " has " + release.releaseGroup.length + " release groups");
+  }
+
+  // Make sure release group exists in DB too.
+  dbAlbum = yield exports.getAlbum(release.releaseGroups[0].id);
+  if (!dbAlbum) {
+    // TODO: wtf is going on with Musicbrainz? Should this be an error instead?
+    return false;
+  }
+
+  dbRelease = yield db.AlbumRelease.create({
+    mbid: id,
+  });
+
+  yield dbAlbum.addRelease(dbRelease);
+
+  dbArtists = {};
+
+  for (medium of release.mediums) {
+    for (track of medium.tracks) {
+      recording = track.recording;
+      dbSong = yield db.Song.findOrCreate({mbid: recording.id}, {
+        mbid: recording.id,
+        title: recording.title,
+        duration: parseInt(recording.length, 10),
+      });
+      dbSong.addAlbumRelease(dbRelease);
+
+      for (artistCredit of recording.artistCredits) {
+        artist = artistCredit.artist;
+
+        dbArtist = dbArtists[artist.id];
+        if (!dbArtist) {
+          dbArtist = yield exports.getArtist(artist.id);
+          if (!dbArtist) {
+            throw new Error("Couldn't find artist with mbid " + artist.id + " linked from artist credit of recording " + recording.id);
+          }
+          dbArtists[artist.id] = dbArtist;
+        }
+
+        yield dbSong.addArtist(dbArtist);
+        yield dbArtist.addSong(dbSong);
+      }
+    }
+  }
+
+  return dbRelease;
+});
+
+// Looks for scrobbles that don't have a song mbid and does its best to fill them in.
+exports.repairMissingSongIds = Promise.coroutine(function*(num) {
+  var i = 0;
+
+  for (; i < num; i++) {
+    // Scrobbles that don't have a song but *do* have an album are pretty easy.
+    var withAlbum = yield db.Scrobble.find({
+      where: {
+        song_mbid: "",
+        album_mbid: {
+          ne: ""
+        }
+      },
+      order: "repair_attempts ASC"
+    });
+
+    debug("Repairing missing song id for scrobble on " + withAlbum.when_scrobbled, withAlbum.song_name, withAlbum.album_mbid);
+
+    var dbRelease = yield exports.getRelease(withAlbum.album_mbid);
+    var songs = yield dbRelease.getSongs();
+
+    // Attempt to find a match...
+    var searchTitle = replace(withAlbum.song_name).toLowerCase();
+    var successful = false;
+    for (var song of songs) {
+      if (song.title.toLowerCase() === searchTitle) {
+        debug("Found missing song id!", song.mbid);
+
+        // Update all other instances.
+        yield db.Scrobble.update({
+          song_mbid: song.mbid,
+        }, {
+          song_name: withAlbum.song_name,
+          album_mbid: withAlbum.album_mbid,
+        });
+
+        successful = true;
+        break;
+      }
+    }
+
+    if (!successful) {
+      withAlbum.repair_attempts++;
+      yield withAlbum.save();
+    }
   }
 });

@@ -8,7 +8,7 @@ module.exports = function(sequelize, DataTypes) {
       },
     },
     name: DataTypes.STRING,
-    image: DataTypes.STRING,
+    type: DataTypes.STRING,
   }, {
     underscored: true
   });

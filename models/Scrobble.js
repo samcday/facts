@@ -9,7 +9,8 @@ module.exports = function(sequelize, DataTypes) {
     album_mbid: DataTypes.STRING(36),
     artist_name: DataTypes.STRING,
     artist_mbid: DataTypes.STRING(36),
-    unclassified: DataTypes.BOOLEAN
+    unclassified: DataTypes.BOOLEAN,
+    repair_attempts: DataTypes.INTEGER,
   }, {
     underscored: true
   });
