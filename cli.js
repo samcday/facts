@@ -1,8 +1,11 @@
+global.Promise = require("bluebird");
+Promise.longStackTraces();
+Error.stackTraceLimit = Infinity;
+
 require("traceurified")(function(path) {
   return path.indexOf("node_modules/koa") > -1 || path.indexOf("node_modules") === -1;
 });
 
-global.Promise = require("bluebird");
 require("dotenv").load();
 
 var lastfm = require("./lastfm");

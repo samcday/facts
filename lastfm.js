@@ -7,14 +7,31 @@ var debug = require("debug")("lastfm");
 var db = require("./db");
 
 var replacements = {
-  "…": "..."
+  "…": "...",
+  "’": "'"
 };
 
+// Makes a best effort to normalize a string according to some predefined rules.
+function normalize(str) {
+  // Remove all illegal chars.
+  str = str.replace(/[^a-z0-9]/i, " ");
+
+  // Collapse whitespace.
+  str = str.replace(/[ ]{1,}/, " ");
+
+  // Remove trailing whitespace, lower case everything.
+  return str.trim().toLowerCase();
+}
+
 function replace(str) {
-  for (var replace of Object.keys(replacements)) {
-    str = str.replace(replace, replacements[replace]);
+  for (var item of Object.keys(replacements)) {
+    str = str.replace(item, replacements[item]);
   }
   return str;
+}
+
+function compareTitles(l, r) {
+  return normalize(l) === normalize(r);
 }
 
 mb.configure({
@@ -265,6 +282,8 @@ exports.getRelease = Promise.coroutine(function*(id) {
 
 // Looks for scrobbles that don't have a song mbid and does its best to fill them in.
 exports.repairMissingSongIds = Promise.coroutine(function*(num) {
+  yield db.ready;
+
   var i = 0;
 
   for (; i < num; i++) {
@@ -276,6 +295,7 @@ exports.repairMissingSongIds = Promise.coroutine(function*(num) {
           ne: ""
         }
       },
+      attributes: ["id", "when_scrobbled", "song_name", "song_mbid", "album_mbid"],
       order: "repair_attempts ASC"
     });
 
@@ -285,10 +305,9 @@ exports.repairMissingSongIds = Promise.coroutine(function*(num) {
     var songs = yield dbRelease.getSongs();
 
     // Attempt to find a match...
-    var searchTitle = replace(withAlbum.song_name).toLowerCase();
     var successful = false;
     for (var song of songs) {
-      if (song.title.toLowerCase() === searchTitle) {
+      if (compareTitles(song.title, withAlbum.song_name)) {
         debug("Found missing song id!", song.mbid);
 
         // Update all other instances.
@@ -305,8 +324,7 @@ exports.repairMissingSongIds = Promise.coroutine(function*(num) {
     }
 
     if (!successful) {
-      withAlbum.repair_attempts++;
-      yield withAlbum.save();
+      yield withAlbum.increment("repair_attempts", {by: 1});
     }
   }
 });
