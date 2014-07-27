@@ -1,6 +1,7 @@
 "use strict";
 
 var limiter = require("limiter");
+var natural = require("natural");
 var LastFmNode = require("lastfm").LastFmNode;
 var mb = Promise.promisifyAll(require("musicbrainz"));
 var debug = require("debug")("lastfm");
@@ -14,10 +15,13 @@ var replacements = {
 // Makes a best effort to normalize a string according to some predefined rules.
 function normalize(str) {
   // Remove all illegal chars.
-  str = str.replace(/[^a-z0-9]/i, " ");
+  str = str.replace(/[^a-z0-9]/gi, " ");
+
+  // Collapse runs of more than 2 of the same character.
+  str = str.replace(/(\w)\1{2,}/gi, "$1$1");
 
   // Collapse whitespace.
-  str = str.replace(/[ ]{1,}/, " ");
+  str = str.replace(/\s{1,}/g, " ");
 
   // Remove trailing whitespace, lower case everything.
   return str.trim().toLowerCase();
@@ -31,7 +35,7 @@ function replace(str) {
 }
 
 function compareTitles(l, r) {
-  return normalize(l) === normalize(r);
+  return natural.JaroWinklerDistance(normalize(l), normalize(r)) >= 0.98;
 }
 
 mb.configure({
@@ -140,7 +144,7 @@ exports.repairScrobble = Promise.coroutine(function*(id) {
 exports.getArtist = Promise.coroutine(function*(id) {
   debug("Loading artist with id " + id);
 
-  var dbArtist, artist;
+  var dbArtist, artist, alias, dbAlias;
 
   dbArtist = yield db.Artist.find(id);
 
@@ -155,12 +159,12 @@ exports.getArtist = Promise.coroutine(function*(id) {
   }
 
   dbArtist = yield db.Artist.create({
-    mbid: id,
+    mbid: artist.id,
     name: artist.name
   });
 
-  for (var alias of artist.aliases) {
-    var dbAlias = yield db.ArtistAlias.create({
+  for (alias of artist.aliases) {
+    dbAlias = yield db.ArtistAlias.create({
       name: alias
     });
     yield dbAlias.setArtist(dbArtist);
@@ -308,7 +312,7 @@ exports.repairMissingSongIds = Promise.coroutine(function*(num) {
     var successful = false;
     for (var song of songs) {
       if (compareTitles(song.title, withAlbum.song_name)) {
-        debug("Found missing song id!", song.mbid);
+        debug("Found missing song id!", withAlbum.song_name, song.mbid);
 
         // Update all other instances.
         yield db.Scrobble.update({
@@ -327,4 +331,16 @@ exports.repairMissingSongIds = Promise.coroutine(function*(num) {
       yield withAlbum.increment("repair_attempts", {by: 1});
     }
   }
+});
+
+exports.setSongId = Promise.coroutine(function*(artistMbid, songName, mbid) {
+  var affected = yield db.Scrobble.update({
+    song_mbid: mbid
+  }, {
+    song_mbid: "",
+    artist_mbid: artistMbid,
+    song_name: songName
+  });
+
+  return affected;
 });

@@ -10,6 +10,7 @@
   "license": "ISC",
   "dependencies": {
     "bluebird": "^2.2.2",
+    "commander": "^2.3.0",
     "debug": "^1.0.4",
     "dotenv": "^0.4.0",
     "koa": "^0.8.1",
