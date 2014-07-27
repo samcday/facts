@@ -67,7 +67,6 @@ else if(program.updateSong) {
   });
 }
 else if(program.song) {
-  console.log(typeof program.song);
   db.Song.find({
     where: {
       mbid: program.song,
@@ -88,5 +87,5 @@ else if(program.song) {
     ]
   }).then(function(song) {
     console.log(JSON.stringify(song, null, 2));
-  })
+  });
 }

@@ -14,64 +14,19 @@ var lastfm = require("./lastfm");
 var app = koa();
 app.use(router(app));
 
-app.get("/lastfm/backfill", function*() {
-  this.body = newScrobbles;
-});
-
-// app.get("/lastfm/artist/:mbid", function*() {
-//   var artistInfo = yield lastfmReq("artist.getInfo", {
-//     mbid: this.params.mbid
-//   });
-
-//   artistInfo = artistInfo.artist;
-
-//   var artist = yield db.LastfmArtist.create({
-//     mbid: artistInfo.mbid,
-//     name: artistInfo.name,
-//   });
-
-//   this.body = artist;
-// });
-
-// app.get("/lastfm/album/:mbid", function*() {
-//   var albumInfo = yield lastfmReq("album.getInfo", {
-//     mbid: this.params.mbid,
-//   });
-
-//   albumInfo = albumInfo.album;
-
-//   var album = yield LastfmAlbum.create({
-//     mbid: albumInfo.mbid,
-//   })
-// });
-
 app.get("/lastfm/scrobbles", function*() {
   yield db.ready;
 
-  var scrobbles = yield db.LastfmScrobble.findAll({
+  var scrobbles = yield db.Scrobble.findAll({
     order: "when_scrobbled DESC",
-    limit: 10,
-    include: {
-      model: db.LastfmSong,
-      as: "Song",
-      include: [
-        {
-          model: db.LastfmAlbum,
-          as: "Album"
-        },
-        {
-          model: db.LastfmArtist,
-          as: "Artist"
-        },
-      ]
-    }
+    limit: 100
   });
 
   this.body = scrobbles;
 });
 
 app.get("/lastfm/scrobble/:when", function*() {
-  var scrobble = yield db.LastfmScrobble.find({
+  var scrobble = yield db.Scrobble.find({
     when_scrobbled: new Date(this.params.when)
   });
 
@@ -79,17 +34,48 @@ app.get("/lastfm/scrobble/:when", function*() {
 });
 
 app.get("/lastfm/song/:mbid", function*() {
-  var song = yield db.LastfmSong.find({
-    mbid: this.params.mbid,
-    include: {
-      model: db.LastfmAlbum,
-      include: {
-        model: db.LastfmArtist
+  var song = yield db.Song.find({
+    where: {
+      mbid: this.params.mbid
+    },
+    include: [
+      {
+        model: db.AlbumRelease,
+        include: [{
+          model: db.Album,
+          include: {
+            model: db.Artist
+          }
+        }]
+      },
+      {
+        model: db.Artist
       }
-    }
+    ]
   });
 
   this.body = song;
+});
+
+app.get("/lastfm/release/:mbid", function*() {
+  var release = yield db.AlbumRelease.find({
+    where: {
+      mbid: this.params.mbid
+    },
+    include: [
+      {
+        model: db.Album,
+        include: {
+          model: db.Artist
+        }
+      },
+      {
+        model: db.Song
+      }
+    ]
+  });
+
+  this.body = release;
 });
 
 app.listen(3000);

@@ -20,6 +20,9 @@ function normalize(str) {
   // Collapse runs of more than 2 of the same character.
   str = str.replace(/(\w)\1{2,}/gi, "$1$1");
 
+  // Remove "Part <num>", where num is numbers or roman numerals.
+  str = str.replace(/part [0-9ivxlcdm]+/gi, " ");
+
   // Collapse whitespace.
   str = str.replace(/\s{1,}/g, " ");
 
