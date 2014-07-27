@@ -9,6 +9,8 @@ var Album = sequelize.Album = sequelize.import("models/Album");
 var AlbumRelease = sequelize.AlbumRelease = sequelize.import("models/AlbumRelease");
 var Artist = sequelize.Artist = sequelize.import("models/Artist");
 var ArtistAlias = sequelize.ArtistAlias = sequelize.import("models/ArtistAlias");
+sequelize.MergedMbid = sequelize.import("models/MergedMbid");
+sequelize.MusicbrainzBlacklist = sequelize.import("models/MusicbrainzBlacklist");
 
 // An artist has many albums and songs.
 Artist.hasMany(Album);

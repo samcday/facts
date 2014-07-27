@@ -29,8 +29,12 @@ function cmdAssignment(expected) {
 program.version("1.0.0")
   .option("-b, --backfill", "Runs backfill.")
   .option("-r, --repair", "Repairs scrobbles with missing data.")
-  .option("--update-song <artist mbid>:<title>:<mbid>", "Manually specify the mbid for a song/artist combination.", cmdAssignment(3))
-  .option("-s, --song <mbid>", "Show data for song with mbid")
+  .option("--load-missing", "Loads missing data (artists / releases / songs")
+  .option("--update-song <title>:<mbid>", "Manually specify an mbid for given title. Artist/album must be specified for disambiguation", cmdAssignment(2))
+  .option("-s, --show", "Show entity data, provide --song / --artist / --release")
+  .option("--song <mbid>", "Specify song mbid")
+  .option("--artist <mbid>", "Specify artist mbid")
+  .option("--release <mbid>", "Specify release mbid")
   .parse(process.argv);
 
 var db = require("./db");
@@ -55,14 +59,32 @@ if (program.backfill) {
   runBackfill();
 }
 else if(program.repair) {
-  lastfm.repairMissingSongIds(100);
+  lastfm.repairMissingArtistIds(100).then(function(num) {
+    console.log("Repaired " + num + " missing artist IDs.");
+    // return lastfm.repairMissingSongIds(100);
+  }).then(function(num) {
+    console.log("Repaired " + num + " missing song IDs.");
+  });
+}
+else if(program.loadMissing) {
+  lastfm.loadMissingArtists(500).then(function(num) {
+    console.log("Loaded " + num + " missing artists.");
+  });
 }
 else if(program.updateSong) {
-  var artistMbid = program.updateSong[0];
-  var name = program.updateSong[1];
-  var mbid = program.updateSong[2];
+  var name = program.updateSong[0];
+  var mbid = program.updateSong[1];
 
-  lastfm.setSongId(artistMbid, name, mbid).then(function(affected) {
+  var releaseMbid = program.release;
+  var artistMbid = program.artist;
+
+  if (!releaseMbid && !artistMbid) {
+    console.log("ERROR: please provide either artist or release mbid.");
+    program.help();
+    return;
+  }
+
+  lastfm.setSongId(name, mbid, releaseMbid, artistMbid).then(function(affected) {
     console.log("Updated " + affected + " scrobbles.");
   });
 }

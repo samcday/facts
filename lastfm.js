@@ -7,13 +7,33 @@ var mb = Promise.promisifyAll(require("musicbrainz"));
 var debug = require("debug")("lastfm");
 var db = require("./db");
 
+// Artists that we've already tried looking up in MB recently.
+var skipArtists = [];
+
 var replacements = {
   "…": "...",
-  "’": "'"
+  "’": "'",
+  "ﬁ": "fi",
+  "Gonna": "Going To",
+  "Wanna": "Want to",
 };
 
 // Makes a best effort to normalize a string according to some predefined rules.
 function normalize(str) {
+  // Remove everything in parentheses / square brackets
+  // TODO: should skip this if it ends in Remix.
+  str = str.replace(/\([^)]+?\)/g, " ");
+  str = str.replace(/\[[^\]]+?\]/g, " ");
+
+  // Remove " - Version|Remaster"
+  str = str.replace(/-\s*.*?(?:Version|Remaster)$/i, " ");
+
+  // Remove " - live"
+  str = str.replace(/-\s*.*?Live$/i, " ");
+
+  // Remove single quotes.
+  str = str.replace("'", "");
+
   // Remove all illegal chars.
   str = str.replace(/[^a-z0-9]/gi, " ");
 
@@ -21,7 +41,7 @@ function normalize(str) {
   str = str.replace(/(\w)\1{2,}/gi, "$1$1");
 
   // Remove "Part <num>", where num is numbers or roman numerals.
-  str = str.replace(/part [0-9ivxlcdm]+/gi, " ");
+  str = str.replace(/(?:part|pt\.) (?:[0-9ivxlcdm]+|A|B|C|D|E)/gi, " ");
 
   // Collapse whitespace.
   str = str.replace(/\s{1,}/g, " ");
@@ -38,7 +58,14 @@ function replace(str) {
 }
 
 function compareTitles(l, r) {
-  return natural.JaroWinklerDistance(normalize(l), normalize(r)) >= 0.98;
+  var lNorm = normalize(replace(l)), rNorm = normalize(replace(r));
+
+  // If our normalization brutalized the song title too hard, then we bail out.
+  if (!lNorm || !rNorm) {
+    return false;
+  }
+
+  return natural.JaroWinklerDistance(normalize(l), normalize(r)) >= 0.80;
 }
 
 mb.configure({
@@ -144,11 +171,31 @@ exports.repairScrobble = Promise.coroutine(function*(id) {
   }
 });
 
+var createMergedMbid = Promise.coroutine(function*(obsoleteId, newId) {
+  yield db.MergedMbid.findOrCreate({mbid: obsoleteId}, {
+    mbid: obsoleteId,
+    new_mbid: newId,
+  });
+});
+
+var checkMergedMbid = Promise.coroutine(function*(obsoleteId) {
+  var merged = yield db.MergedMbid.find(obsoleteId);
+
+  if (merged) {
+    return merged.new_mbid;
+  }
+
+  return obsoleteId;
+});
+
 exports.getArtist = Promise.coroutine(function*(id) {
+  yield db.ready;
+
   debug("Loading artist with id " + id);
 
   var dbArtist, artist, alias, dbAlias;
 
+  id = yield checkMergedMbid(id);
   dbArtist = yield db.Artist.find(id);
 
   if (dbArtist) {
@@ -159,6 +206,18 @@ exports.getArtist = Promise.coroutine(function*(id) {
 
   if (!artist) {
     return false;
+  }
+
+  // If the id that came back for the artist differs from what we requested, then we've found an obselete mbid.
+  if (artist.id !== id) {
+    yield createMergedMbid(id, artist.id);
+
+    // Since we got back a different id, we may already have this in DB. If we do, we're done.
+    dbArtist = yield db.Artist.find(artist.id);
+
+    if (dbArtist) {
+      return dbArtist;
+    }
   }
 
   dbArtist = yield db.Artist.create({
@@ -237,7 +296,7 @@ exports.getRelease = Promise.coroutine(function*(id) {
   }
 
   // As far as I know, you can never have a release that belongs to more or less than one release group.
-  if (release.releaseGroups.length != 1) {
+  if (release.releaseGroups.length !== 1) {
     throw new Error("Release " + id + " has " + release.releaseGroup.length + " release groups");
   }
 
@@ -291,11 +350,11 @@ exports.getRelease = Promise.coroutine(function*(id) {
 exports.repairMissingSongIds = Promise.coroutine(function*(num) {
   yield db.ready;
 
-  var i = 0;
+  var i = 0, matching, song, withAlbum, dbRelease, songs;
 
   for (; i < num; i++) {
     // Scrobbles that don't have a song but *do* have an album are pretty easy.
-    var withAlbum = yield db.Scrobble.find({
+    withAlbum = yield db.Scrobble.find({
       where: {
         song_mbid: "",
         album_mbid: {
@@ -308,42 +367,188 @@ exports.repairMissingSongIds = Promise.coroutine(function*(num) {
 
     debug("Repairing missing song id for scrobble on " + withAlbum.when_scrobbled, withAlbum.song_name, withAlbum.album_mbid);
 
-    var dbRelease = yield exports.getRelease(withAlbum.album_mbid);
-    var songs = yield dbRelease.getSongs();
+    dbRelease = yield exports.getRelease(withAlbum.album_mbid);
+    songs = yield dbRelease.getSongs();
 
     // Attempt to find a match...
-    var successful = false;
-    for (var song of songs) {
+    matching = [];
+    for (song of songs) {
       if (compareTitles(song.title, withAlbum.song_name)) {
-        debug("Found missing song id!", withAlbum.song_name, song.mbid);
-
-        // Update all other instances.
-        yield db.Scrobble.update({
-          song_mbid: song.mbid,
-        }, {
-          song_name: withAlbum.song_name,
-          album_mbid: withAlbum.album_mbid,
-        });
-
-        successful = true;
-        break;
+        matching.push(song);
       }
     }
 
-    if (!successful) {
+    // We only consider the match a success if there was exactly one.
+    if (matching.length === 1) {
+      song = matching[0];
+      debug("Found missing song id!", withAlbum.song_name, song.mbid);
+
+      // Update all other instances.
+      yield db.Scrobble.update({
+        song_mbid: song.mbid,
+      }, {
+        song_name: withAlbum.song_name,
+        album_mbid: withAlbum.album_mbid,
+      });
+    } else {
       yield withAlbum.increment("repair_attempts", {by: 1});
     }
   }
 });
 
-exports.setSongId = Promise.coroutine(function*(artistMbid, songName, mbid) {
+exports.setSongId = Promise.coroutine(function*(songName, mbid, releaseMbid, artistMbid) {
+  yield db.ready;
+
+  var criteria = {
+    song_mbid: "",
+    song_name: songName,
+  };
+
+  if (releaseMbid) {
+    criteria.album_mbid = releaseMbid;
+  }
+  if (artistMbid) {
+    criteria.artist_mbid = artistMbid;
+  }
+
   var affected = yield db.Scrobble.update({
     song_mbid: mbid
-  }, {
-    song_mbid: "",
-    artist_mbid: artistMbid,
-    song_name: songName
-  });
+  }, criteria);
 
   return affected;
+});
+
+var checkMusicbrainzBlacklist = Promise.coroutine(function*(name) {
+  var blacklist = yield db.MusicbrainzBlacklist.find({
+    where: {
+      name: name,
+      attempts: { gt: 5 },
+    }
+  });
+  return blacklist !== null;
+});
+
+var markMusicbrainzBlacklist = Promise.coroutine(function*(name) {
+  var blacklist = yield db.MusicbrainzBlacklist.findOrCreate({ name: name }, {
+    name: name,
+    attempts: 0,
+  });
+  yield blacklist.increment("attempts", { by: 1 });
+});
+
+exports.repairMissingArtistIds = Promise.coroutine(function*(num) {
+  var i = 0, missingArtist, artistName, dbArtist, dbArtistAlias, artistId, artists;
+
+  for (; i < num; i++) {
+    missingArtist = yield db.Scrobble.find({
+      where: {
+        artist_mbid: ""
+      },
+      order: "repair_attempts ASC"
+    });
+
+    if (!missingArtist) {
+      return i;
+    }
+
+    artistName = missingArtist.artist_name;
+
+    // Chop off featured artists.
+    artistName = artistName.replace(/feat(?:\.|uring)?\s.*$/i, "").trim();
+
+    if (skipArtists.indexOf(artistName) > -1) {
+      yield missingArtist.increment("repair_attempts", {by: 1});
+      i--;
+      continue;
+    }
+
+    debug("Attempting to repair missing artist id for " + missingArtist.artist_name);
+
+    // First, let's see if we can't find it with a direct search in the DB. As we load artists from MB we populate the
+    // artist alias list too, so it could very well already be in there.
+    dbArtist = yield db.Artist.find({
+      where: {
+        name: artistName
+      },
+    });
+
+    if (!dbArtist) {
+      // Perhaps we can find an alias? Sequelize doesn't seem to support doing this in a single query. Or at least I 
+      // can't figure out how to.
+      dbArtistAlias = yield db.ArtistAlias.find({
+        where: {
+          name: artistName
+        },
+        include: db.Artist
+      });
+
+      if (dbArtistAlias) {
+        dbArtist = dbArtistAlias.artist;
+      }
+    }
+
+    if (!dbArtist) {
+      // Nope. Definitely not in DB. Let's try a musicbrainz search.
+      debug("Looking up artist '" + artistName + "' in MB.");
+      artists = yield mb.searchArtistsAsync('"' + artistName + '"', []);
+      artists = artists.filter(artist => artist.searchScore === 100);
+
+      if (artists.length !== 1) {
+        debug("No perfect match when looking up " + artistName);        
+      } else {
+        dbArtist = yield exports.getArtist(artists[0].id);
+      }
+    }
+
+    artistId = (dbArtist || {}).mbid;
+
+    if (artistId) {
+      debug("Found missing artist id!", missingArtist.artist_name, artistId);
+
+      yield db.Scrobble.update({
+        artist_mbid: artistId,
+      }, {
+        artist_name: missingArtist.artist_name,
+        artist_mbid: "",
+      });
+    } else {
+      skipArtists.push(artistName);
+      yield missingArtist.increment("repair_attempts", {by: 1});
+    }
+  }
+
+  return i;
+});
+
+// Looks for scrobbles that don't have a corresponding artist, and loads them.
+exports.loadMissingArtists = Promise.coroutine(function*(num) {
+  yield db.ready;
+
+  var i = 0, noArtist, artist;
+
+  for (; i < num; i++) {
+    noArtist = yield db.Scrobble.find({
+      where: {
+        artist_mbid: { ne: "" },
+        "Artist.name": null
+      },
+      include: db.Artist,
+      attributes: ["artist_mbid"],
+    });
+
+    if (!noArtist) {
+      return i;
+    }
+
+    artist = yield exports.getArtist(noArtist.artist_mbid);
+
+    // Obsolete id. Update it.
+    if (artist.mbid !== noArtist.artist_mbid) {
+      yield db.Scrobble.update({
+        artist_mbid: artist.mbid,
+      }, {
+        artist_mbid: noArtist.artist_mbid,
+      });
+    }
+  }
 });
