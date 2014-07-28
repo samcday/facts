@@ -204,7 +204,13 @@ exports.getArtist = Promise.coroutine(function*(id) {
 
   debug("Looking up artist with ID " + id + " in MB.");
 
-  artist = yield mb.lookupArtistAsync(id, ["aliases"]);
+  try {
+    artist = yield mb.lookupArtistAsync(id, ["aliases"]);
+  } catch(e) {
+    if (e.name !== 'OperationalError' || !e.message.startsWith("Not Found")) {
+      throw e;
+    }
+  }
 
   if (!artist) {
     return false;
@@ -250,7 +256,13 @@ exports.getAlbum = Promise.coroutine(function*(id) {
 
   debug("Looking up album with ID " + id + " in MB.");
 
-  releaseGroup = yield mb.lookupReleaseGroupAsync(id, ["artists"]);
+  try {
+    releaseGroup = yield mb.lookupReleaseGroupAsync(id, ["artists"]);
+  } catch(e) {
+    if (e.name !== 'OperationalError' || !e.message.startsWith("Not Found")) {
+      throw e;
+    }
+  }
 
   if (!releaseGroup) {
     debug("Musicbrainz has no release-group with id " + id);
@@ -310,7 +322,13 @@ exports.getRelease = Promise.coroutine(function*(id) {
   debug("Looking up release with ID " + id + " in MB.");
 
   // Since we're asking for release, might as well suck down all the recordings for it too.
-  release = yield mb.lookupReleaseAsync(id, ["artist-credits", "release-groups", "recordings"]);
+  try {
+    release = yield mb.lookupReleaseAsync(id, ["artist-credits", "release-groups", "recordings"]);
+  } catch(e) {
+    if (e.name !== 'OperationalError' || !e.message.startsWith("Not Found")) {
+      throw e;
+    }
+  }
 
   if (!release) {
     debug("Music-brainz has no release with id " + id);
