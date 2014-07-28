@@ -283,21 +283,28 @@ exports.getAlbum = Promise.coroutine(function*(id) {
 
   dbArtists = [];
 
-  // Make sure all corresponding artists exists in DB.
-  for (artistCredit of releaseGroup.artistCredits) {
-    artist = artistCredit.artist;
-    dbArtist = yield exports.getArtist(artist.id);
-    if (!dbArtist) {
-      // TODO: should throw?
-      return false;
+  // If this release group is a compilation, we don't load artists. We just end up loading in a shitload
+  // of artists we don't care about.
+
+  if (releaseGroup.secondaryTypes.indexOf("Compilation") < 0 && releaseGroup.type !== "Compilation") {
+    // Make sure all corresponding artists exists in DB.
+    for (artistCredit of releaseGroup.artistCredits) {
+      artist = artistCredit.artist;
+      dbArtist = yield exports.getArtist(artist.id);
+      if (!dbArtist) {
+        // TODO: should throw?
+        return false;
+      }
+      dbArtists.push(dbArtist);
     }
-    dbArtists.push(dbArtist);
+  } else {
+    debug("Not loading artists for release-group " + releaseGroup.id + " because it's a compilation.");
   }
 
   dbAlbum = yield db.Album.create({
     mbid: id,
     name: releaseGroup.title,
-    type: releaseGroup.primaryType,
+    type: releaseGroup.type,
   });
 
   for (dbArtist of dbArtists) {
@@ -367,33 +374,38 @@ exports.getRelease = Promise.coroutine(function*(id) {
 
   dbArtists = {};
 
-  for (medium of release.mediums) {
-    debug("Release id " + release.id + " has " + medium.tracks.length + " tracks");
-    for (track of medium.tracks) {
-      recording = track.recording;
-      dbSong = yield db.Song.findOrCreate({mbid: recording.id}, {
-        mbid: recording.id,
-        title: recording.title,
-        duration: parseInt(recording.length, 10) || -1,
-      });
-      dbSong.addAlbumRelease(dbRelease);
+  // We refuse to load tracks for compilations. That's an epic waste of time.
+  if (dbAlbum.type !== "Compilation") {
+    for (medium of release.mediums) {
+      debug("Release id " + release.id + " has " + medium.tracks.length + " tracks");
+      for (track of medium.tracks) {
+        recording = track.recording;
+        dbSong = yield db.Song.findOrCreate({mbid: recording.id}, {
+          mbid: recording.id,
+          title: recording.title,
+          duration: parseInt(recording.length, 10) || -1,
+        });
+        dbSong.addAlbumRelease(dbRelease);
 
-      for (artistCredit of recording.artistCredits) {
-        artist = artistCredit.artist;
+        for (artistCredit of recording.artistCredits) {
+          artist = artistCredit.artist;
 
-        dbArtist = dbArtists[artist.id];
-        if (!dbArtist) {
-          dbArtist = yield exports.getArtist(artist.id);
+          dbArtist = dbArtists[artist.id];
           if (!dbArtist) {
-            throw new Error("Couldn't find artist with mbid " + artist.id + " linked from artist credit of recording " + recording.id);
+            dbArtist = yield exports.getArtist(artist.id);
+            if (!dbArtist) {
+              throw new Error("Couldn't find artist with mbid " + artist.id + " linked from artist credit of recording " + recording.id);
+            }
+            dbArtists[artist.id] = dbArtist;
           }
-          dbArtists[artist.id] = dbArtist;
-        }
 
-        yield dbSong.addArtist(dbArtist);
-        yield dbArtist.addSong(dbSong);
+          yield dbSong.addArtist(dbArtist);
+          yield dbArtist.addSong(dbSong);
+        }
       }
     }
+  } else {
+    debug("Not loading tracks for release " + release.id + " because it's a compilation.");
   }
 
   return dbRelease;
