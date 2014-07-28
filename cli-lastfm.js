@@ -29,7 +29,7 @@ function cmdAssignment(expected) {
 program.version("1.0.0")
   .option("-b, --backfill", "Runs backfill.")
   .option("-r, --repair", "Repairs scrobbles with missing data.")
-  .option("--load-missing", "Loads missing data (artists / releases / songs")
+  .option("--load-missing <num>", "Loads missing data (artists / releases / songs")
   .option("--update-song <title>:<mbid>", "Manually specify an mbid for given title. Artist/album must be specified for disambiguation", cmdAssignment(2))
   .option("-s, --show", "Show entity data, provide --song / --artist / --release")
   .option("--song <mbid>", "Specify song mbid")
@@ -67,11 +67,13 @@ else if(program.repair) {
   });
 }
 else if(program.loadMissing) {
-  lastfm.loadMissingArtists(500).then(function(num) {
-    console.log("Loaded " + num + " missing artists.");
-    return lastfm.loadMissingSongs(500);
-  }).then(function(num) {
-    console.log("Loaded " + num + " missing songs.");
+  var num = parseInt(program.loadMissing, 10) || 100;
+
+  lastfm.loadMissingArtists(num).then(function(processed) {
+    console.log("Loaded " + processed + " missing artists.");
+    return lastfm.loadMissingSongs(num);
+  }).then(function(processed) {
+    console.log("Loaded " + processed + " missing songs.");
   });
 }
 else if(program.updateSong) {
