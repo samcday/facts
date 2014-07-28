@@ -69,6 +69,9 @@ else if(program.repair) {
 else if(program.loadMissing) {
   lastfm.loadMissingArtists(500).then(function(num) {
     console.log("Loaded " + num + " missing artists.");
+    return lastfm.loadMissingSongs(500);
+  }).then(function(num) {
+    console.log("Loaded " + num + " missing songs.");
   });
 }
 else if(program.updateSong) {
