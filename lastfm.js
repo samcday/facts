@@ -2,13 +2,11 @@
 
 var limiter = require("limiter");
 var natural = require("natural");
+var entities = new (require('html-entities').AllHtmlEntities);
 var LastFmNode = require("lastfm").LastFmNode;
 var mb = Promise.promisifyAll(require("musicbrainz"));
 var debug = require("debug")("lastfm");
 var db = require("./db");
-
-// Artists that we've already tried looking up in MB recently.
-var skipArtists = [];
 
 var replacements = {
   "…": "...",
@@ -633,6 +631,93 @@ exports.repairMissingArtistIds = Promise.coroutine(function*(num) {
       });
     } else {
       yield missingArtist.increment("repair_attempts", {by: 1});
+    }
+  }
+
+  return i;
+});
+
+exports.repairMissingAlbumIds = Promise.coroutine(function*(num) {
+  var i = 0, missingAlbum, dbAlbums, dbAlbum, found = false, releaseGroups;
+
+  var checkAlbum = Promise.coroutine(function*(dbAlbum) {
+    var dbArtists, dbArtist;
+    dbArtists = yield dbAlbum.getArtists();
+
+    for (dbArtist of dbArtists) {
+      if (dbArtist.mbid === missingAlbum.artist_mbid) {
+        debug("Found mbid " + dbAlbum.mbid + " for album name " + albumName);
+        // TODO: tired coding fail. This is the release-group ID. Can't be saving this in the album id field.
+        // yield db.Scrobble.update({
+        //   album_mbid: dbAlbum.mbid,
+        // }, {
+        //   album_name: missingAlbum.album_name,
+        //   artist_mbid: missingAlbum.artist_mbid,
+        // });
+        return true;
+      }
+    }
+  });
+
+  for (; i < num; i++) {
+    missingAlbum = yield db.Scrobble.find({
+      where: {
+        album_mbid: "",
+        artist_mbid: { ne: "" },
+      },
+      order: "repair_attempts ASC"
+    });
+
+    if (!missingAlbum) {
+      return i;
+    }
+
+    debug("Attempting to repair missing album id for " + missingAlbum.album_name);
+
+    var albumName = missingAlbum.album_name;
+
+    // Trim out crap.
+    albumName = entities.decode(albumName);
+    albumName = albumName.replace(/\(.*?(?:Edition|Version|CD|EP|Deluxe|Tracks)\)/gi, "");
+    albumName = albumName.replace(/\(disc [0-9]+\)/gi, "");
+    albumName = albumName.replace(/\[.*?\]/gi, "");
+    albumName = albumName.replace(/\s{1,}/g, " ");
+
+    // See if we can't find it in DB already.
+    dbAlbums = yield db.Album.findAll({
+      where: {
+        name: albumName
+      },
+    });
+
+    for (dbAlbum of dbAlbums) {
+      if (yield checkAlbum(dbAlbum)) {
+        found = true;
+        break;
+      }
+    }
+
+    if (found) {
+      continue;
+    }
+
+    // Search musicbrainz.
+    debug("Searching musicbrainz for " + albumName);
+    releaseGroups = yield mb.searchReleaseGroupsAsync('"' + albumName + '"', {arid: missingAlbum.artist_mbid});
+    releaseGroups.filter(releaseGroup => releaseGroup.searchScore === 100);
+
+    for (var releaseGroup of releaseGroups) {
+      dbAlbum = yield exports.getAlbum(releaseGroup.id);
+      for (var release of releaseGroup.releases) {
+        yield exports.getRelease(release.id);
+      }
+      if (yield checkAlbum(dbAlbum)) {
+        found = true;
+      }
+    }
+
+    if (!found) {
+      yield missingAlbum.increment("repair_attempts", {by: 1});
     }
   }
 

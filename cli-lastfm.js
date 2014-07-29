@@ -28,7 +28,8 @@ function cmdAssignment(expected) {
 
 program.version("1.0.0")
   .option("-b, --backfill", "Runs backfill.")
-  .option("-r, --repair", "Repairs scrobbles with missing data.")
+  .option("-r, --repair <num>", "Repairs scrobbles with missing data.")
+  .option("-r, --repair-albums <num>", "Repairs scrobbles with missing album ids.")
   .option("--load-missing <num>", "Loads missing data (artists / releases / songs")
   .option("--update-song <title>:<mbid>", "Manually specify an mbid for given title. Artist/album must be specified for disambiguation", cmdAssignment(2))
   .option("-s, --show", "Show entity data, provide --song / --artist / --release")
@@ -59,11 +60,22 @@ if (program.backfill) {
   runBackfill();
 }
 else if(program.repair) {
-  lastfm.repairMissingArtistIds(100).then(function(num) {
-    console.log("Repaired " + num + " missing artist IDs.");
-    // return lastfm.repairMissingSongIds(100);
-  }).then(function(num) {
-    console.log("Repaired " + num + " missing song IDs.");
+  var num = parseInt(program.repair, 10) || 100;
+
+  lastfm.repairMissingArtistIds(num).then(function(processed) {
+    console.log("Repaired " + processed + " missing artist IDs.");
+    return lastfm.repairMissingAlbumIds(num);
+  }).then(function(processed) {
+    console.log("Repaired " + processed + " missing album IDs.");
+    return lastfm.repairMissingSongIds(num);
+  }).then(function(processed) {
+    console.log("Repaired " + processed + " missing song IDs.");
+  });
+}
+else if (program.repairAlbums) {
+  var num = parseInt(program.repair, 10) || 100;
+  lastfm.repairMissingAlbumIds(num).then(function(processed) {
+    console.log("Repaired " + processed + " missing album IDs.");
   });
 }
 else if(program.loadMissing) {
@@ -71,9 +83,9 @@ else if(program.loadMissing) {
 
   lastfm.loadMissingArtists(num).then(function(processed) {
     console.log("Loaded " + processed + " missing artists.");
-    return lastfm.loadMissingSongs(num);
+    // return lastfm.loadMissingSongs(num);
   }).then(function(processed) {
-    console.log("Loaded " + processed + " missing songs.");
+    // console.log("Loaded " + processed + " missing songs.");
   });
 }
 else if(program.updateSong) {
