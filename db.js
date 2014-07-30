@@ -21,7 +21,7 @@ ArtistAlias.belongsTo(Artist);
 
 // Each album belongs to one or more artists, and has many releases.
 Album.hasMany(Artist);
-Album.hasMany(AlbumRelease, { as: "Release" });
+Album.hasMany(AlbumRelease, { as: "Releases" });
 
 // Each album release belongs to an album, and has many songs.
 AlbumRelease.belongsTo(Album);

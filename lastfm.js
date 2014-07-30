@@ -641,25 +641,38 @@ exports.repairMissingAlbumIds = Promise.coroutine(function*(num) {
   var i = 0, missingAlbum, dbAlbums, dbAlbum, found = false, releaseGroups;
 
   var checkAlbum = Promise.coroutine(function*(dbAlbum) {
-    var dbArtists, dbArtist;
+    var dbArtists, dbArtist, dbReleases;
     dbArtists = yield dbAlbum.getArtists();
 
     for (dbArtist of dbArtists) {
       if (dbArtist.mbid === missingAlbum.artist_mbid) {
         debug("Found mbid " + dbAlbum.mbid + " for album name " + albumName);
-        // TODO: tired coding fail. This is the release-group ID. Can't be saving this in the album id field.
-        // yield db.Scrobble.update({
-        //   album_mbid: dbAlbum.mbid,
-        // }, {
-        //   album_name: missingAlbum.album_name,
-        //   artist_mbid: missingAlbum.artist_mbid,
-        // });
-        return true;
+
+        // Find the first release that contains the song name.
+        dbReleases = yield dbAlbum.getReleases({
+          where: {
+            "Songs.title": missingAlbum.song_name
+          },
+          include: db.Song
+        });
+
+        if (dbReleases.length > 0) {
+          yield db.Scrobble.update({
+            album_mbid: dbReleases[0].mbid,
+          }, {
+            album_name: missingAlbum.album_name,
+            artist_mbid: missingAlbum.artist_mbid,
+          });
+
+          return true;
+        }
       }
     }
   });
 
   for (; i < num; i++) {
+    found = false;
+
     missingAlbum = yield db.Scrobble.find({
       where: {
         album_mbid: "",
