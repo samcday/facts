@@ -36,6 +36,8 @@ program.version("1.0.0")
   .option("--song <mbid>", "Specify song mbid")
   .option("--artist <mbid>", "Specify artist mbid")
   .option("--release <mbid>", "Specify release mbid")
+  .option("--album <mbid>", "Specify album mbid")
+  .option("--redirect <from mbid>:<target mbid>", "Redirects <from mbid> to <target mbid>", cmdAssignment(2))
   .parse(process.argv);
 
 var db = require("./db");
@@ -126,5 +128,40 @@ else if(program.song) {
     ]
   }).then(function(song) {
     console.log(JSON.stringify(song, null, 2));
+  });
+}
+else if(program.redirect) {
+  var from = program.redirect[0],
+      to = program.redirect[1];
+
+  console.log("Redirecting " + from + " to " + to);
+
+  db.MergedMbid.create({
+    mbid: from,
+    new_mbid: to,
+    forced: true,
+  }).then(function() {
+    console.log("Done. Updating scrobbles with merged entities...");
+    return lastfm.updateMergedIds();
+  }).then(function(updated) {
+    console.log("Done. Updated " + updated + " entities.");
+  }).catch(function(err) {
+    console.error(err);
+  });
+}
+else if (program.show) {
+  var prom;
+
+  if (program.release) {
+    prom = lastfm.getRelease(program.release);
+  }
+  else {
+    throw new Error("Provide one of --album / --release / --song");
+  }
+
+  prom.then(function(entity) {
+    console.log(JSON.stringify(entity, null, 2));
+  }).catch(function(err) {
+    console.error(err);
   });
 }

@@ -9,6 +9,7 @@ var Album = sequelize.Album = sequelize.import("models/Album");
 var AlbumRelease = sequelize.AlbumRelease = sequelize.import("models/AlbumRelease");
 var Artist = sequelize.Artist = sequelize.import("models/Artist");
 var ArtistAlias = sequelize.ArtistAlias = sequelize.import("models/ArtistAlias");
+var AlbumAlias = sequelize.AlbumAlias = sequelize.import("models/AlbumAlias");
 sequelize.MergedMbid = sequelize.import("models/MergedMbid");
 sequelize.MusicbrainzBlacklist = sequelize.import("models/MusicbrainzBlacklist");
 
@@ -22,6 +23,9 @@ ArtistAlias.belongsTo(Artist);
 // Each album belongs to one or more artists, and has many releases.
 Album.hasMany(Artist);
 Album.hasMany(AlbumRelease, { as: "Releases" });
+Album.hasMany(AlbumAlias, { as: "Aliases" });
+
+AlbumAlias.belongsTo(Album);
 
 // Each album release belongs to an album, and has many songs.
 AlbumRelease.belongsTo(Album);

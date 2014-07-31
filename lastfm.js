@@ -102,6 +102,23 @@ function lastfmReq(name, params) {
   });
 }
 
+var createMergedMbid = Promise.coroutine(function*(obsoleteId, newId) {
+  yield db.MergedMbid.findOrCreate({mbid: obsoleteId}, {
+    mbid: obsoleteId,
+    new_mbid: newId,
+  });
+});
+
+var checkMergedMbid = Promise.coroutine(function*(obsoleteId) {
+  var merged = yield db.MergedMbid.find(obsoleteId);
+
+  if (merged) {
+    return merged.new_mbid;
+  }
+
+  return obsoleteId;
+});
+
 // Loads num historic scrobbles from Last.fm and populates DB.
 exports.backfill = Promise.coroutine(function*(num) {
   yield db.ready;
@@ -140,11 +157,11 @@ exports.backfill = Promise.coroutine(function*(num) {
     dbScrobbles.push({
       when_scrobbled: new Date(scrobble.date.uts * 1000),
       song_name: scrobble.name,
-      song_mbid: scrobble.mbid,
+      song_mbid: yield checkMergedMbid(scrobble.mbid),
       album_name: scrobble.album["#text"],
-      album_mbid: scrobble.album.mbid,
+      album_mbid: yield checkMergedMbid(scrobble.album.mbid),
       artist_name: scrobble.artist["#text"],
-      artist_mbid: scrobble.artist.mbid,
+      artist_mbid: yield checkMergedMbid(scrobble.artist.mbid),
       unclassified: true,
     });
   }
@@ -167,23 +184,6 @@ exports.repairScrobble = Promise.coroutine(function*(id) {
     scrobble.song_mbid = songMbid;
     yield scrobble.save();
   }
-});
-
-var createMergedMbid = Promise.coroutine(function*(obsoleteId, newId) {
-  yield db.MergedMbid.findOrCreate({mbid: obsoleteId}, {
-    mbid: obsoleteId,
-    new_mbid: newId,
-  });
-});
-
-var checkMergedMbid = Promise.coroutine(function*(obsoleteId) {
-  var merged = yield db.MergedMbid.find(obsoleteId);
-
-  if (merged) {
-    return merged.new_mbid;
-  }
-
-  return obsoleteId;
 });
 
 exports.getArtist = Promise.coroutine(function*(id) {
@@ -646,17 +646,11 @@ exports.repairMissingAlbumIds = Promise.coroutine(function*(num) {
 
     for (dbArtist of dbArtists) {
       if (dbArtist.mbid === missingAlbum.artist_mbid) {
-        debug("Found mbid " + dbAlbum.mbid + " for album name " + albumName);
-
-        // Find the first release that contains the song name.
-        dbReleases = yield dbAlbum.getReleases({
-          where: {
-            "Songs.title": missingAlbum.song_name
-          },
-          include: db.Song
-        });
+        // Use the first release we find in the DB. Bonus tracks / rarities be damned.
+        dbReleases = yield dbAlbum.getReleases({limit: 1});
 
         if (dbReleases.length > 0) {
+          debug("Found release " + dbReleases[0].mbid + " for album name " + albumName);
           yield db.Scrobble.update({
             album_mbid: dbReleases[0].mbid,
           }, {
@@ -694,13 +688,24 @@ exports.repairMissingAlbumIds = Promise.coroutine(function*(num) {
     albumName = entities.decode(albumName);
     albumName = albumName.replace(/\(.*?(?:Edition|Version|CD|EP|Deluxe|Tracks)\)/gi, "");
     albumName = albumName.replace(/\(disc [0-9]+\)/gi, "");
+    albumName = albumName.replace(/\s*-?\s*EP/gi, "");
     albumName = albumName.replace(/\[.*?\]/gi, "");
     albumName = albumName.replace(/\s{1,}/g, " ");
+    albumName = albumName.trim();
+
+    if (!albumName) {
+      continue;
+    }
 
     // See if we can't find it in DB already.
     dbAlbums = yield db.Album.findAll({
-      where: {
-        name: albumName
+      where: db.or(
+        { name: albumName },
+        { "Aliases.name": albumName }
+      ),
+      include: {
+        model: db.AlbumAlias,
+        as: "Aliases",
       },
     });
 
@@ -716,7 +721,7 @@ exports.repairMissingAlbumIds = Promise.coroutine(function*(num) {
     }
 
     // Search musicbrainz.
-    debug("Searching musicbrainz for " + albumName);
+    debug("Searching musicbrainz for " + albumName + " from artist " + missingAlbum.artist_mbid);
     releaseGroups = yield mb.searchReleaseGroupsAsync('"' + albumName + '"', {arid: missingAlbum.artist_mbid});
     releaseGroups.filter(releaseGroup => releaseGroup.searchScore === 100);
 
@@ -815,4 +820,37 @@ exports.loadMissingSongs = Promise.coroutine(function*(num) {
   }
 
   return i;
+});
+
+exports.updateMergedIds = Promise.coroutine(function*() {
+  var updated = 0;
+
+  var mergeArtists = yield db.query("select distinct r.new_mbid, s.artist_mbid from scrobbles s INNER JOIN MergedMbids r ON r.mbid = s.artist_mbid", null, {raw: true});
+  for (var mergeArtist of mergeArtists) {
+    updated += yield db.Scrobble.update({
+      artist_mbid: mergeArtist.new_mbid,
+    }, {
+      artist_mbid: mergeArtist.artist_mbid
+    });
+  }
+
+  var mergeAlbums = yield db.query("select distinct r.new_mbid, s.album_mbid from scrobbles s INNER JOIN MergedMbids r ON r.mbid = s.album_mbid", null, {raw: true});
+  for (var mergeAlbum of mergeAlbums) {
+    updated += yield db.Scrobble.update({
+      album_mbid: mergeAlbum.new_mbid,
+    }, {
+      album_mbid: mergeAlbum.album_mbid
+    });
+  }
+
+  var mergeSongs = yield db.query("select distinct r.new_mbid, s.song_mbid from scrobbles s INNER JOIN MergedMbids r ON r.mbid = s.song_mbid", null, {raw: true});
+  for (var mergeSong of mergeSongs) {
+    updated += yield db.Scrobble.update({
+      song_mbid: mergeSong.new_mbid,
+    }, {
+      song_mbid: mergeSong.song_mbid
+    });
+  }
+
+  return updated;
 });

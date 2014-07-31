@@ -12,7 +12,9 @@ module.exports = function(sequelize, DataTypes) {
       validate: {
         len: 36
       },
-    }
+    },
+    // Indicates that this is not a merge discovered via Musicbrainz, but rather a forced one.
+    forced: DataTypes.BOOLEAN,
   }, {
     underscored: true
   });
