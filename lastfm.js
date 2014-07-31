@@ -677,6 +677,7 @@ exports.repairMissingAlbumIds = Promise.coroutine(function*(num) {
       where: {
         album_mbid: "",
         artist_mbid: { ne: "" },
+        album_name: { ne: "" },
       },
       order: "repair_attempts ASC"
     });
