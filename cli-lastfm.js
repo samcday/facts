@@ -28,6 +28,7 @@ function cmdAssignment(expected) {
 
 program.version("1.0.0")
   .option("-b, --backfill", "Runs backfill.")
+  .option("-u, --update", "Runs update.")
   .option("-r, --repair <num>", "Repairs scrobbles with missing data.")
   .option("-r, --repair-albums <num>", "Repairs scrobbles with missing album ids.")
   .option("--load-missing <num>", "Loads missing data (artists / releases / songs")
@@ -60,6 +61,13 @@ if (program.backfill) {
   }
 
   runBackfill();
+}
+else if (program.update) {
+  lastfm.update().then(function(loaded) {
+    console.log("Update done! Loaded " + loaded + " scrobbles.");
+  }).catch(function(err) {
+    console.error(err);
+  });
 }
 else if(program.repair) {
   var num = parseInt(program.repair, 10) || 100;
