@@ -119,6 +119,70 @@ var checkMergedMbid = Promise.coroutine(function*(obsoleteId) {
   return obsoleteId;
 });
 
+// Loads all newer scrobbles from Last.fm since the latest we have in DB.
+exports.update = Promise.coroutine(function*() {
+  var latestScrobble = yield db.Scrobble.find({
+    order: "when_scrobbled DESC",
+    attributes: ["when_scrobbled"]
+  });
+
+  if (!latestScrobble) {
+    throw new Error("No scrobbles in DB. Can't update.");
+  }
+
+  var queryFrom = +new Date(latestScrobble.when_scrobbled) / 1000,
+      queryTo = Math.floor(+new Date() / 1000),
+      running = true,
+      page = 1,
+      scrobbles = [];
+
+  debug("Running lastfm update for date range " + queryFrom + " - " + queryTo);
+
+  while (running) {
+    debug("Fetching page " + page + " for lastfm update.");
+    var response = yield lastfmReq("user.getRecentTracks", {
+      user: process.env.LASTFM_USER,
+      from: queryFrom,
+      to: queryTo,
+      page: page,
+      limit: 200
+    });
+
+    // No tracks to load.
+    if (response.recenttracks.total && parseInt(response.recenttracks.total, 10) === 0) {
+      return 0;
+    }
+
+    var totalPages = parseInt(response.recenttracks["@attr"].totalPages, 10);
+    if (totalPages === page) {
+      running = false;
+    }
+
+    page++;
+
+    var newScrobbles = response.recenttracks.track;
+    newScrobbles = newScrobbles.filter(scrobble => !(scrobble["@attr"]||{}).nowplaying);
+    scrobbles = scrobbles.concat(newScrobbles);
+  }
+
+  var dbScrobbles = [];
+  for (var scrobble of scrobbles) {
+    dbScrobbles.push({
+      when_scrobbled: new Date(scrobble.date.uts * 1000),
+      song_name: scrobble.name,
+      song_mbid: yield checkMergedMbid(scrobble.mbid),
+      album_name: scrobble.album["#text"],
+      album_mbid: yield checkMergedMbid(scrobble.album.mbid),
+      artist_name: scrobble.artist["#text"],
+      artist_mbid: yield checkMergedMbid(scrobble.artist.mbid),
+      unclassified: true,
+    });
+  }
+  yield db.Scrobble.bulkCreate(dbScrobbles);
+
+  return scrobbles.length;
+});
+
 // Loads num historic scrobbles from Last.fm and populates DB.
 exports.backfill = Promise.coroutine(function*(num) {
   yield db.ready;
