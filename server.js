@@ -33,6 +33,29 @@ app.get("/lastfm/scrobble/:when", function*() {
   this.body = scrobble;
 });
 
+app.get("/lastfm/artist/:mbid", function*() {
+  var artist = yield db.Artist.find({
+    where: {
+      mbid: this.params.mbid
+    },
+    include: [
+      {
+        model: db.Album,
+        include: [{
+          model: db.AlbumRelease,
+          as: "Releases"
+        }]
+      },
+      {
+        model: db.ArtistAlias,
+        as: "Alias",
+      }
+    ]
+  });
+
+  this.body = artist;
+});
+
 app.get("/lastfm/song/:mbid", function*() {
   var song = yield db.Song.find({
     where: {
