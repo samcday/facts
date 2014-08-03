@@ -119,6 +119,11 @@ var checkMergedMbid = Promise.coroutine(function*(obsoleteId) {
   return obsoleteId;
 });
 
+exports.duration = Promise.coroutine(function*(since) {
+  var result = yield db.query("select sum(s.duration) as dur from Scrobbles scrob LEFT JOIN Songs s ON s.mbid = scrob.song_mbid WHERE scrob.song_mbid != '' AND from_unixtime(" + since + ")", null, {raw:true});
+  return result[0].dur;
+});
+
 // Loads all newer scrobbles from Last.fm since the latest we have in DB.
 exports.update = Promise.coroutine(function*() {
   var latestScrobble = yield db.Scrobble.find({

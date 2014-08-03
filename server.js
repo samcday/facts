@@ -7,12 +7,18 @@ global.Promise = require("bluebird");
 
 var koa = require("koa");
 var router = require("koa-router");
+var humanizeDuration = require("humanize-duration");
 // var Promise = require("bluebird");
 var db = require("./db");
 var lastfm = require("./lastfm");
 
 var app = koa();
 app.use(router(app));
+
+app.get("/lastfm/duration/all", function*() {
+  var millis = yield lastfm.duration(0);
+  this.body = humanizeDuration(millis);
+});
 
 app.get("/lastfm/scrobbles", function*() {
   yield db.ready;
