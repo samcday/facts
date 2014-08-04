@@ -20,6 +20,11 @@ app.get("/lastfm/duration/all", function*() {
   this.body = humanizeDuration(millis);
 });
 
+app.get("/lastfm/duration/since", function*() {
+  var millis = yield lastfm.duration(this.query.time);
+  this.body = humanizeDuration(millis);
+});
+
 app.get("/lastfm/scrobbles", function*() {
   yield db.ready;
 
