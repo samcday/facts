@@ -8,6 +8,7 @@ global.Promise = require("bluebird");
 var koa = require("koa");
 var router = require("koa-router");
 var humanizeDuration = require("humanize-duration");
+var moment = require("moment");
 // var Promise = require("bluebird");
 var db = require("./db");
 var lastfm = require("./lastfm");
@@ -23,6 +24,28 @@ app.get("/lastfm/duration/all", function*() {
 app.get("/lastfm/duration/since", function*() {
   var millis = yield lastfm.duration(this.query.time);
   this.body = humanizeDuration(millis);
+});
+
+app.get("/lastfm/day", function*() {
+  var from = moment(this.params.date).startOf("day");
+  var to = moment(from).add(1, "day");
+  var scrobbles = yield db.Scrobble.findAll({
+    where: {
+      when_scrobbled: {
+        between: [from.toDate(), to.toDate()],
+      },
+      "Song.title": {
+        ne: null,
+      }
+    },
+    include: db.Song,
+  });
+
+  this.body = scrobbles.map(scrobble => ({
+    when: +moment(scrobble.when_scrobbled),
+    song_name: scrobble.song.title,
+    duration: scrobble.song.duration,
+  }));
 });
 
 app.get("/lastfm/scrobbles", function*() {
