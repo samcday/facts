@@ -38,13 +38,21 @@ app.get("/lastfm/day", function*() {
         ne: null,
       }
     },
-    include: db.Song,
+    include: {
+      model: db.Song,
+      include: {
+        model: db.Artist
+      }
+    }
   });
 
   this.body = scrobbles.map(scrobble => ({
     when: +moment(scrobble.when_scrobbled),
-    song_name: scrobble.song.title,
+    name: scrobble.song.title,
+    id: scrobble.song.mbid,
     duration: scrobble.song.duration,
+    artist_name: scrobble.song.artists[0].name,
+    artist_id: scrobble.song.artists[0].mbid,
   }));
 });
 
