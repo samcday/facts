@@ -1,3 +1,5 @@
+#!/usr/bin/env node
+
 global.Promise = require("bluebird");
 Promise.longStackTraces();
 Error.stackTraceLimit = Infinity;
